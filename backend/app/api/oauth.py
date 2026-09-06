@@ -8,6 +8,7 @@ Shape of the flow (README, "How it works"):
 """
 import base64
 import hashlib
+import logging
 from datetime import timedelta
 from urllib.parse import urlencode, urlparse
 
@@ -28,6 +29,8 @@ from app.models.base import utcnow
 from app.models.oauth import AuthorizationCode, OAuthClient
 from app.models.rbac import Platform
 from app.services import revocation
+
+log = logging.getLogger("hynt.accounts.oauth")
 
 router = APIRouter(tags=["oauth"])
 
@@ -87,6 +90,17 @@ async def authorize(
         # prompt=none is the hidden renewal iframe. It must never show a login
         # page: the iframe would render an unusable form the user cannot see.
         if prompt == "none":
+            # INFO, not debug: a renewal that cannot see the cookie is the estate's
+            # most consequential silent failure — every desk drops to its sign-in
+            # gate and loops. Logging whether the cookie even arrived is what
+            # separates "browser withheld it" from "session no longer resolves".
+            log.info(
+                "silent renewal refused: client=%s cookie_present=%s cookies=%s ua=%s",
+                client_id,
+                settings.cookie_name in request.cookies,
+                sorted(request.cookies),
+                request.headers.get("user-agent", "")[:120],
+            )
             return _redirect_with(redirect_uri, {"error": "login_required", "state": state})
         # Bounce to the SPA's login route, carrying the whole authorize request
         # so the browser lands back here once the cookie exists.

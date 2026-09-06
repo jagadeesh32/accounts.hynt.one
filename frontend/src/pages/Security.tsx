@@ -9,6 +9,7 @@ export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void 
   const [mfaSetup, setMfaSetup] = useState<{ secret: string } | null>(null);
   const [otp, setOtp] = useState("");
   const [disablePassword, setDisablePassword] = useState("");
+  const [fullName, setFullName] = useState(me.full_name ?? "");
 
   const loadSessions = () =>
     api.get<{ sessions: SessionRow[] }>("/api/v1/auth/sessions").then((d) => setSessions(d.sessions));
@@ -37,6 +38,32 @@ export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void 
       </header>
 
       {note && <div className={`alert ${note.kind === "ok" ? "ok" : "error"}`}>{note.text}</div>}
+
+      <div className="card">
+        <h2>Profile</h2>
+        <p className="muted">
+          Your name travels in the token's <span className="mono">name</span> claim, so every desk
+          shows the new one on its next token — within 15 minutes.
+        </p>
+        <form
+          className="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void act(() => api.patch("/api/v1/me", { full_name: fullName.trim() || null }), "Profile saved.");
+          }}
+        >
+          <input
+            value={fullName}
+            placeholder="Your name"
+            maxLength={200}
+            onChange={(e) => setFullName(e.target.value)}
+          />
+          <button className="btn primary" type="submit" disabled={fullName.trim() === (me.full_name ?? "").trim()}>
+            Save
+          </button>
+        </form>
+        <p className="fineprint">Signed in as <span className="mono">{me.email}</span>.</p>
+      </div>
 
       <div className="card">
         <h2>Password</h2>

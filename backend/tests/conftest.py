@@ -54,6 +54,10 @@ def server():
         # host-only and insecure or httpx would never send it back.
         "HYNT_COOKIE_DOMAIN": "",
         "HYNT_COOKIE_SECURE": "false",
+        # Explicit because the real .env sits in BACKEND and pydantic still reads
+        # it here: without this the suite would inherit production's
+        # SameSite=none against secure=false and refuse to start.
+        "HYNT_COOKIE_SAMESITE": "lax",
         "PYTHONPATH": str(BACKEND),
     }
     subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=BACKEND, env=env, check=True,

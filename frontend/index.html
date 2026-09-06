@@ -19,6 +19,12 @@
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <!-- data-cfasync="false" opts this out of Cloudflare Rocket Loader, which
+         rewrites type="module" to a bogus MIME type and re-executes the bundle
+         itself — unreliably, for ES modules. This is the identity provider's own
+         login page: if it does not boot, nothing in the estate can be signed
+         into. See the matching plugin in vite.config.ts, which re-adds the
+         attribute Vite strips when it rewrites this tag. -->
+    <script data-cfasync="false" type="module" src="/src/main.tsx"></script>
   </body>
 </html>
