@@ -37,7 +37,9 @@ class Settings(BaseSettings):
     login_window_seconds: int = 300
 
     # --- ops ---
-    cors_origins: str = ""                       # comma separated, dev only
+    # Comma separated, and required in production: the platform SPAs exchange
+    # their auth code against /oauth/token with a cross-origin fetch.
+    cors_origins: str = ""
     trusted_redirect_hosts: str = "hynt.one"     # suffix allow-list for redirect_uri
 
     @property

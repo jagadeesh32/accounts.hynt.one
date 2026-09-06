@@ -11,7 +11,7 @@ import json
 import secrets
 import sys
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.keys import get_active_key, jwks as build_jwks, rotate_key
 from app.core.security import hash_password, password_problem
@@ -19,7 +19,7 @@ from app.core.sessions import revoke_all_sessions
 from app.db import SessionLocal
 from app.models.billing import Plan
 from app.models.identity import User
-from app.models.oauth import OAuthClient
+from app.models.oauth import OAuthClient, Revocation
 from app.models.rbac import Platform, Role
 from app.services import provisioning, revocation
 
@@ -328,6 +328,33 @@ async def cmd_jwks(args):
         print(json.dumps(await build_jwks(db), indent=2))
 
 
+async def cmd_clear_revocations(args):
+    """Lift a user-level revocation before it expires.
+
+    `grant` and `passwd` revoke on every change so new permissions take effect
+    at once, and platforms refuse anything on that list outright — newly minted
+    tokens included. The account is therefore locked out of every platform for
+    two token lifetimes, which is the wrong outcome when the change was meant to
+    *give* someone access. This is the way back, for when the revocation was
+    bookkeeping rather than a response to a compromise.
+    """
+    async with SessionLocal() as db:
+        user = (await db.execute(
+            select(User).where(User.email == args.email.strip().lower())
+        )).scalars().first()
+        if user is None:
+            sys.exit("no such user")
+        result = await db.execute(
+            delete(Revocation).where(
+                Revocation.subject_type == "user",
+                Revocation.subject_id == str(user.id),
+            )
+        )
+        await db.commit()
+        print(f"cleared {result.rowcount or 0} user-level revocation(s) for {args.email}")
+        print("platforms pick this up on their next poll (~30s)")
+
+
 async def cmd_prune(args):
     async with SessionLocal() as db:
         removed = await revocation.prune(db)
@@ -372,6 +399,11 @@ def main():
     p.add_argument("--email", required=True)
     p.add_argument("--remove", action="store_true")
     p.set_defaults(fn=cmd_superadmin)
+
+    p = sub.add_parser("clear-revocations",
+                       help="lift a user's revocation early (undoes grant/passwd lockout)")
+    p.add_argument("--email", required=True)
+    p.set_defaults(fn=cmd_clear_revocations)
 
     sub.add_parser("list-users").set_defaults(fn=cmd_list_users)
     sub.add_parser("list-clients").set_defaults(fn=cmd_list_clients)
