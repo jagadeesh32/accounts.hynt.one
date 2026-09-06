@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type Me, type SessionRow } from "../api";
+import {
+  Confirm, CopyButton, Icon, PasswordField, Skeleton, deviceOf, passwordScore, relTime,
+  STRENGTH_LABEL, useToast,
+} from "../ui";
 
 export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void }) {
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const toast = useToast();
+  const [sessions, setSessions] = useState<SessionRow[] | null>(null);
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
-  const [note, setNote] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [mfaSetup, setMfaSetup] = useState<{ secret: string } | null>(null);
   const [otp, setOtp] = useState("");
   const [disablePassword, setDisablePassword] = useState("");
+  const [confirmRevokeAll, setConfirmRevokeAll] = useState(false);
+  const [confirmRevokeOne, setConfirmRevokeOne] = useState<SessionRow | null>(null);
+  const [confirmMfaOff, setConfirmMfaOff] = useState(false);
 
   const loadSessions = () =>
     api.get<{ sessions: SessionRow[] }>("/api/v1/auth/sessions").then((d) => setSessions(d.sessions));
@@ -18,28 +25,32 @@ export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void 
   }, []);
 
   async function act(fn: () => Promise<unknown>, ok: string) {
-    setNote(null);
     try {
       await fn();
-      setNote({ kind: "ok", text: ok });
+      toast.ok(ok);
       await loadSessions();
       onChanged();
     } catch (err) {
-      setNote({ kind: "error", text: err instanceof ApiError ? err.message : "Something went wrong." });
+      toast.error("Something went wrong", err instanceof ApiError ? err.message : undefined);
     }
   }
+
+  const score = passwordScore(next);
 
   return (
     <section className="page">
       <header className="page-head">
         <h1>Security</h1>
-        <p className="muted">Your password, two-factor and signed-in devices.</p>
+        <p className="sub">Your password, two-factor and signed-in devices.</p>
       </header>
 
-      {note && <div className={`alert ${note.kind === "ok" ? "ok" : "error"}`}>{note.text}</div>}
-
       <div className="card">
-        <h2>Password</h2>
+        <div className="card-head">
+          <div className="card-title">
+            <span className="ticon"><Icon name="key" size={16} /></span>
+            <h2>Password</h2>
+          </div>
+        </div>
         <p className="muted">
           Changing your password signs you out of every other device, everywhere.
         </p>
@@ -53,37 +64,79 @@ export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void 
             ).then(() => { setCurrent(""); setNext(""); });
           }}
         >
-          <input type="password" placeholder="Current password" value={current} required
-                 autoComplete="current-password" onChange={(e) => setCurrent(e.target.value)} />
-          <input type="password" placeholder="New password (10+ characters)" value={next} required
-                 minLength={10} autoComplete="new-password" onChange={(e) => setNext(e.target.value)} />
-          <button className="btn primary" type="submit">Change</button>
+          <PasswordField
+            value={current} onChange={setCurrent} placeholder="Current password"
+            autoComplete="current-password" required
+          />
+          <PasswordField
+            value={next} onChange={setNext} placeholder="New password (10+ characters)"
+            autoComplete="new-password" minLength={10} required
+          />
+          <button className="btn primary" type="submit">
+            <Icon name="refresh" size={14} />Change
+          </button>
         </form>
+        {next && (
+          <div className="strength">
+            <div className="strength-bar">
+              {[1, 2, 3, 4].map((i) => (
+                <i key={i} className={i <= score ? `on-${score}` : ""} />
+              ))}
+            </div>
+            <div className="strength-label">{STRENGTH_LABEL[score] || "Too short"}</div>
+          </div>
+        )}
       </div>
 
       <div className="card">
-        <h2>Two-factor authentication</h2>
+        <div className="card-head">
+          <div className="card-title">
+            <span className={`ticon ${me.mfa_enabled ? "ok" : ""}`}>
+              <Icon name={me.mfa_enabled ? "shield-check" : "shield"} size={16} />
+            </span>
+            <h2>Two-factor authentication</h2>
+          </div>
+          {me.mfa_enabled && <span className="chip ok-chip"><span className="dot" />Active</span>}
+        </div>
+
         {me.mfa_enabled ? (
           <>
-            <p className="ok-text">Two-factor is on.</p>
+            <p className="ok-text">Two-factor is on — a second step is required every time you sign in.</p>
             <form className="row" onSubmit={(e) => {
               e.preventDefault();
-              void act(() => api.post("/api/v1/me/mfa/disable", { password: disablePassword }), "Two-factor turned off.")
-                .then(() => setDisablePassword(""));
+              setConfirmMfaOff(true);
             }}>
-              <input type="password" placeholder="Confirm your password" value={disablePassword} required
-                     onChange={(e) => setDisablePassword(e.target.value)} />
-              <button className="btn danger" type="submit">Turn off</button>
+              <PasswordField
+                value={disablePassword} onChange={setDisablePassword}
+                placeholder="Confirm your password" autoComplete="current-password" required
+              />
+              <button className="btn danger" type="submit">
+                <Icon name="shield-off" size={14} />Turn off
+              </button>
             </form>
           </>
         ) : mfaSetup ? (
-          <>
-            <p className="muted">Scan this with your authenticator app, then enter the code it shows.</p>
+          <div className="mfa-steps">
             <div className="mfa">
               <img className="qr" src="/api/v1/me/mfa/qr.png" alt="Two-factor QR code" />
               <div>
-                <p className="muted">Or enter this key by hand:</p>
-                <code className="secret">{mfaSetup.secret}</code>
+                <div className="step" style={{ marginBottom: 6 }}>
+                  <span className="step-num">1</span>
+                  <div className="sbody">
+                    <div className="st">Scan the QR code</div>
+                    <div className="sd">With your authenticator app (Google Authenticator, 1Password, Authy…).</div>
+                  </div>
+                </div>
+                <div className="step">
+                  <span className="step-num">2</span>
+                  <div className="sbody">
+                    <div className="st">Or enter this key by hand</div>
+                    <span className="secret">
+                      {mfaSetup.secret}
+                      <CopyButton value={mfaSetup.secret} />
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
             <form className="row" onSubmit={(e) => {
@@ -91,70 +144,126 @@ export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void 
               void act(() => api.post("/api/v1/me/mfa/enable", { otp }), "Two-factor is on.")
                 .then(() => { setMfaSetup(null); setOtp(""); });
             }}>
-              <input inputMode="numeric" maxLength={6} placeholder="123456" value={otp} required
-                     onChange={(e) => setOtp(e.target.value)} />
-              <button className="btn primary" type="submit">Turn on</button>
+              <span className="input-wrap" style={{ flex: "1 1 170px" }}>
+                <span className="lead-icon"><Icon name="fingerprint" size={15} /></span>
+                <input
+                  className="otp-input" inputMode="numeric" maxLength={6} placeholder="· · · · · ·"
+                  value={otp} required style={{ textAlign: "left" }}
+                  onChange={(e) => setOtp(e.target.value.replace(/[^\d]/g, ""))}
+                />
+              </span>
+              <button className="btn primary" type="submit">
+                <Icon name="shield-check" size={14} />Confirm &amp; turn on
+              </button>
             </form>
-          </>
+          </div>
         ) : (
           <>
-            <p className="muted">Add a second step when signing in.</p>
-            <button className="btn" onClick={() => {
+            <p className="muted">Add a second step when signing in — even if your password leaks, nobody gets in.</p>
+            <button className="btn primary" onClick={() => {
               void api.post<{ secret: string }>("/api/v1/me/mfa/setup").then(setMfaSetup);
-            }}>Set up two-factor</button>
+            }}>
+              <Icon name="shield-check" size={14} />Set up two-factor
+            </button>
           </>
         )}
       </div>
 
       <div className="card">
         <div className="card-head">
-          <h2>Signed-in devices</h2>
-          <button className="btn ghost" onClick={() => void act(
-            () => api.post("/api/v1/auth/sessions/revoke-others"), "Other devices signed out.",
-          )}>Sign out everywhere else</button>
+          <div className="card-title">
+            <span className="ticon"><Icon name="monitor" size={16} /></span>
+            <h2>Signed-in devices</h2>
+          </div>
+          <button className="btn ghost" onClick={() => setConfirmRevokeAll(true)}>
+            <Icon name="log-out" size={14} />Sign out everywhere else
+          </button>
         </div>
-        <table className="table">
-          <thead>
-            <tr><th>Device</th><th>IP</th><th>Last seen</th><th /></tr>
-          </thead>
-          <tbody>
-            {sessions.map((s) => (
-              <tr key={s.id}>
-                <td>
-                  {shortenAgent(s.user_agent)}
-                  {s.current && <span className="chip small">this device</span>}
-                </td>
-                <td className="mono">{s.ip}</td>
-                <td>{new Date(s.last_seen_at).toLocaleString()}</td>
-                <td className="right">
-                  {!s.current && (
-                    <button className="btn small danger" onClick={() => void act(
-                      () => api.del(`/api/v1/auth/sessions/${s.id}`), "Device signed out.",
-                    )}>Sign out</button>
-                  )}
-                </td>
-              </tr>
+
+        {!sessions ? (
+          <div className="session-list" aria-hidden="true">
+            {[0, 1].map((i) => (
+              <div key={i} className="session">
+                <Skeleton w={38} h={38} style={{ borderRadius: 11 }} />
+                <div style={{ flex: 1 }}>
+                  <Skeleton w={140} h={13} />
+                  <div style={{ height: 6 }} />
+                  <Skeleton w={200} h={10} />
+                </div>
+              </div>
             ))}
-          </tbody>
-        </table>
+          </div>
+        ) : (
+          <div className="session-list">
+            {sessions.map((s) => {
+              const dev = deviceOf(s.user_agent);
+              return (
+                <div key={s.id} className={`session ${s.current ? "current" : ""}`}>
+                  <span className="dev-icon"><Icon name={dev.icon} size={17} /></span>
+                  <div className="sbody">
+                    <div className="st">
+                      {dev.label}
+                      {s.current && <span className="chip small ok-chip">this device</span>}
+                    </div>
+                    <div className="sd">
+                      <span className="mono">{s.ip ?? "unknown IP"}</span>
+                      <span className="dim"> · </span>
+                      last seen {relTime(s.last_seen_at)}
+                    </div>
+                  </div>
+                  {!s.current && (
+                    <button className="btn small ghost" onClick={() => setConfirmRevokeOne(s)}>
+                      <Icon name="x" size={13} />Sign out
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
+
+      <Confirm
+        open={confirmRevokeAll} onClose={() => setConfirmRevokeAll(false)}
+        title="Sign out everywhere else?"
+        confirmLabel="Sign them out"
+        onConfirm={() => {
+          setConfirmRevokeAll(false);
+          void act(() => api.post("/api/v1/auth/sessions/revoke-others"), "Other devices signed out.");
+        }}
+      >
+        Every other device — phones, laptops, browsers — will need to sign in again.
+        This device stays signed in.
+      </Confirm>
+
+      <Confirm
+        open={!!confirmRevokeOne} onClose={() => setConfirmRevokeOne(null)}
+        title="Sign out this device?"
+        confirmLabel="Sign out"
+        onConfirm={() => {
+          const s = confirmRevokeOne;
+          setConfirmRevokeOne(null);
+          if (s) void act(() => api.del(`/api/v1/auth/sessions/${s.id}`), "Device signed out.");
+        }}
+      >
+        {confirmRevokeOne && (
+          <>{deviceOf(confirmRevokeOne.user_agent).label} at <span className="mono">{confirmRevokeOne.ip}</span> will need to sign in again.</>
+        )}
+      </Confirm>
+
+      <Confirm
+        open={confirmMfaOff} onClose={() => setConfirmMfaOff(false)}
+        title="Turn off two-factor?"
+        icon="shield-off"
+        confirmLabel="Turn off"
+        onConfirm={() => {
+          setConfirmMfaOff(false);
+          void act(() => api.post("/api/v1/me/mfa/disable", { password: disablePassword }), "Two-factor turned off.")
+            .then(() => setDisablePassword(""));
+        }}
+      >
+        Your account will be protected by password alone. You can turn two-factor back on at any time.
+      </Confirm>
     </section>
   );
-}
-
-/** User agents are long and mostly noise; show the part a person recognises. */
-function shortenAgent(agent: string | null): string {
-  if (!agent) return "Unknown device";
-  const browser = /Edg\//.test(agent) ? "Edge"
-    : /Chrome\//.test(agent) ? "Chrome"
-    : /Safari\//.test(agent) ? "Safari"
-    : /Firefox\//.test(agent) ? "Firefox"
-    : "Browser";
-  const os = /Windows/.test(agent) ? "Windows"
-    : /Mac OS X/.test(agent) ? "macOS"
-    : /Android/.test(agent) ? "Android"
-    : /iPhone|iPad/.test(agent) ? "iOS"
-    : /Linux/.test(agent) ? "Linux"
-    : "";
-  return os ? `${browser} on ${os}` : browser;
 }
