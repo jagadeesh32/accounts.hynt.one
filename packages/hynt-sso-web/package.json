@@ -1,0 +1,13 @@
+{
+  "name": "@hynt/sso-web",
+  "version": "1.0.0",
+  "description": "Browser SDK for single sign-on against accounts.hynt.one.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist", "src"],
+  "scripts": { "build": "tsc -p tsconfig.json" },
+  "devDependencies": { "typescript": "^5.6.0" }
+}

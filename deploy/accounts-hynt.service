@@ -1,0 +1,38 @@
+[Unit]
+Description=Hynt Accounts — identity provider for the hynt.one estate (Uvicorn)
+# Postgres holds the sessions, the signing keys and the revocation list: without
+# it this service can authenticate nobody. Wants/After (not Requires) so a
+# renamed postgres unit degrades to "starts and retries" rather than blocking boot.
+Wants=network-online.target postgresql.service
+After=network-online.target postgresql.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/accounts.hynt.one/backend
+EnvironmentFile=/opt/accounts.hynt.one/backend/.env
+
+# --workers 2 is safe here and deliberate, unlike terminal's --workers 1: this
+# service keeps no per-process state. Sessions, codes and keys are all rows, and
+# the only in-memory thing is the login throttle — which is per-worker, so the
+# effective login limit is (workers x limit). That is accounted for in the
+# limits chosen in app/config.py, not an oversight.
+ExecStart=/opt/accounts.hynt.one/backend/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8103 --workers 2 --proxy-headers --forwarded-allow-ips 127.0.0.1
+
+Restart=always
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=20
+KillMode=mixed
+
+# Hardening. The service reads its venv and writes nothing outside /tmp.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
