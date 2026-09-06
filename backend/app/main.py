@@ -23,8 +23,11 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-# Only ever populated in dev. In production the SPA is same-origin behind nginx
-# and the platform SPAs never call this API directly — they redirect to it.
+# The platform SPAs *do* call this API directly: @hynt/sso-web redirects here to
+# authorize, but exchanges the resulting code with a cross-origin JSON fetch to
+# /oauth/token. That preflights, so without an origin list the browser blocks the
+# exchange and sign-in fails as "Failed to fetch" — server-side flows still pass,
+# which is what makes it easy to miss. Set HYNT_CORS_ORIGINS in every environment.
 if settings.cors_list:
     app.add_middleware(
         CORSMiddleware,

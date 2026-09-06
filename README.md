@@ -201,7 +201,7 @@ packages/
   hynt-sso-python/   FastAPI SDK for the platform backends
   hynt-sso-web/      browser SDK for the platform SPAs
 deploy/          nginx
-docs/            RUNNING_LOCALLY.md · INTEGRATION.md · DEPLOYMENT.md
+docs/            RUNNING_LOCALLY.md · INTEGRATION.md · DEPLOYMENT.md · ROLES_AND_PLANS.md
 ```
 
 

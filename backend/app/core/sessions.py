@@ -94,17 +94,24 @@ def set_session_cookie(response: Response, raw: str) -> None:
         max_age=settings.session_ttl_days * 86400,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="lax",
+        samesite=settings.samesite,
         domain=settings.cookie_domain or None,
         path="/",
     )
 
 
 def clear_session_cookie(response: Response) -> None:
+    # secure/samesite must mirror set_session_cookie above. A deletion is just a
+    # Set-Cookie with an expired date, so a browser that would reject the
+    # attribute combination rejects the deletion too and the session cookie
+    # survives the sign-out.
     response.delete_cookie(
         key=settings.cookie_name,
         domain=settings.cookie_domain or None,
         path="/",
+        secure=settings.cookie_secure,
+        httponly=True,
+        samesite=settings.samesite,
     )
 
 

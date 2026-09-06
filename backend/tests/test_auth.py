@@ -41,3 +41,30 @@ def test_logout_ends_the_session(superadmin):
 def test_sessions_list_marks_the_current_device(superadmin):
     sessions = superadmin.get("/api/v1/auth/sessions").json()["sessions"]
     assert len([s for s in sessions if s["current"]]) == 1
+
+
+def test_production_cookie_is_samesite_none_for_the_renewal_iframe():
+    """Silent renewal loads /oauth/authorize?prompt=none in a hidden iframe on
+    the platform's origin, which is cross-site to accounts. SameSite=Lax is not
+    sent there, so the renewal is answered "login_required" and every desk 401s
+    on /api/auth/me once its 15-minute token lapses."""
+    from app.config import Settings
+
+    assert Settings(cookie_secure=True, cookie_samesite="", _env_file=None).samesite == "none"
+
+
+def test_dev_cookie_stays_lax_because_none_needs_secure():
+    from app.config import Settings
+
+    assert Settings(cookie_secure=False, cookie_samesite="", _env_file=None).samesite == "lax"
+
+
+def test_samesite_none_without_secure_is_refused_at_boot():
+    """Browsers drop a SameSite=None cookie that is not Secure. Failing to
+    construct beats booting into an estate where nobody can stay signed in."""
+    import pytest
+
+    from app.config import Settings
+
+    with pytest.raises(ValueError):
+        Settings(cookie_secure=False, cookie_samesite="none", _env_file=None)

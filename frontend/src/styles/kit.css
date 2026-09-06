@@ -1,0 +1,275 @@
+/* Component kit — the pieces src/ui.tsx renders.
+ *
+ * ui.tsx survived the estate restructure; the stylesheet it was written
+ * against did not. Its rules live here rather than back in styles.css so the
+ * split stays honest: styles.css is the app's own layout and pages, this file
+ * is the kit, and either can be read without the other.
+ *
+ * Ported, not pasted. The originals were written for one dark palette and had
+ * literal rgba() throughout; every one of those is now a color-mix() over a
+ * theme token, so the kit follows all seventeen palettes and reads correctly on
+ * a near-white ground as well as a near-black one. Loaded after themes.css,
+ * which is where the tokens mixed from are derived.
+ */
+
+:root {
+  /* The tokens the kit needs that themes.css does not derive. Same idea as its
+     own derivations: mix from a core token, never state a colour. */
+  --glass: color-mix(in srgb, var(--panel) 82%, transparent);
+  --glass-hi: color-mix(in srgb, var(--text) 3%, transparent);
+  --line-soft: color-mix(in srgb, var(--line-2) 55%, transparent);
+
+  --ok-soft: color-mix(in srgb, var(--ok) 12%, transparent);
+  --warn-soft: color-mix(in srgb, var(--warn) 12%, transparent);
+  --danger-soft: color-mix(in srgb, var(--danger) 10%, transparent);
+
+  --radius-2: 12px;
+  --radius-3: 9px;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --t-fast: 0.14s var(--ease-out);
+  --t-med: 0.28s var(--ease-out);
+}
+
+@keyframes rise-in { from { transform: translateY(8px); opacity: 0; } }
+
+/* ---------- buttons: the two variants theirs does not carry ---------- */
+.btn.icon { padding: 8px; width: 34px; height: 34px; display: grid; place-items: center; }
+
+/* Loading dots for busy buttons */
+.btn .dots::after {
+  content: ""; display: inline-block;
+  width: 4px; height: 4px; margin-left: 6px; border-radius: 50%;
+  background: currentColor; animation: pulse-dot 1s ease-in-out infinite;
+}
+@keyframes pulse-dot { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+
+/* ---------- input affordances (PasswordField) ---------- */
+.input-wrap { position: relative; display: flex; align-items: center; }
+.input-wrap .lead-icon {
+  position: absolute; left: 11px; display: grid; place-items: center;
+  color: var(--faint); pointer-events: none; transition: color var(--t-fast);
+}
+.input-wrap:focus-within .lead-icon { color: var(--accent); }
+.input-wrap .trail { position: absolute; right: 6px; }
+.input-wrap .lead-icon ~ input { padding-left: 36px; }
+.input-wrap input[type="password"], .input-wrap input[type="text"] { padding-right: 40px; }
+
+/* ---------- chips: additions to the base in styles.css ---------- */
+.chip .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.chip.accent-chip {
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-2) 9%, transparent);
+}
+.chip.danger-chip {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: var(--danger-soft);
+}
+
+/* ---------- segmented control — sliding pill ---------- */
+.segmented {
+  position: relative; display: inline-flex; gap: 2px; padding: 3px;
+  background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 11px;
+}
+.segmented .seg-pill {
+  position: absolute; top: 3px; bottom: 3px; z-index: 0;
+  background: var(--panel-3);
+  border: 1px solid var(--line-2); border-radius: 8px;
+  box-shadow: 0 2px 10px -3px color-mix(in srgb, var(--text) 30%, transparent);
+  transition: transform 0.32s var(--ease-spring), width 0.32s var(--ease-spring), opacity var(--t-med);
+  opacity: 0;
+}
+.segmented .seg-pill.ready { opacity: 1; }
+.segmented button {
+  position: relative; z-index: 1;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 15px; border: none; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--muted);
+  font: inherit; font-weight: 550; font-size: 0.96em;
+  transition: color var(--t-fast);
+}
+.segmented button:hover { color: var(--text-2); }
+.segmented button.on { color: var(--text); }
+.segmented button .count {
+  padding: 0 6px; border-radius: 10px; font-size: 0.75em;
+  background: var(--panel-3); color: var(--muted);
+}
+.segmented button.on .count { background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- skeletons ---------- */
+.skeleton { position: relative; overflow: hidden; background: var(--panel-2); border-radius: 7px; }
+.skeleton::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 6%, transparent), transparent);
+  animation: shimmer 1.6s infinite;
+  transform: translateX(-100%);
+}
+@keyframes shimmer { to { transform: translateX(100%); } }
+
+/* ---------- empty state ----------
+ * styles.css already has `.card.empty`, a one-line muted card. This is the
+ * standalone <Empty> block; the two never appear on the same element. */
+.empty:not(.card) {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 46px 20px; text-align: center; color: var(--muted);
+}
+.empty .eicon {
+  display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 6px;
+  border-radius: 13px; background: var(--panel-2);
+  border: 1px solid var(--line-2); color: var(--faint);
+}
+.empty h3 { color: var(--text-2); font-size: 1.04em; margin: 0; }
+.empty p { font-size: 0.93em; margin: 0; max-width: 380px; }
+
+/* ---------- toasts ---------- */
+.toast-host {
+  position: fixed; right: 18px; bottom: 18px; z-index: 100;
+  display: flex; flex-direction: column; gap: 10px; max-width: 380px;
+  pointer-events: none;
+}
+.toast {
+  position: relative; overflow: hidden;
+  display: flex; gap: 11px; align-items: flex-start;
+  padding: 13px 15px 14px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--line-2); border-radius: var(--radius-2);
+  box-shadow: var(--shadow-pop);
+  animation: toast-in 0.4s var(--ease-spring) both;
+  pointer-events: auto;
+}
+.toast.leaving { animation: toast-out 0.25s var(--ease-out) both; }
+@keyframes toast-in { from { transform: translateX(30px) scale(0.96); opacity: 0; } }
+@keyframes toast-out { to { transform: translateX(24px) scale(0.96); opacity: 0; } }
+.toast .ticon {
+  flex: 0 0 auto; display: grid; place-items: center;
+  width: 26px; height: 26px; border-radius: 8px;
+}
+.toast.ok .ticon { background: var(--ok-soft); color: var(--ok); }
+.toast.error .ticon { background: var(--danger-soft); color: var(--danger); }
+.toast.info .ticon { background: var(--accent-soft); color: var(--accent); }
+.toast .tbody { flex: 1; min-width: 0; }
+.toast .ttitle { font-weight: 570; font-size: 0.96em; line-height: 1.35; overflow-wrap: anywhere; }
+.toast .tdesc { font-size: 0.89em; color: var(--muted); margin-top: 2px; line-height: 1.45; overflow-wrap: anywhere; }
+.toast .tx {
+  flex: 0 0 auto; background: none; border: none; color: var(--faint); cursor: pointer;
+  display: grid; place-items: center; padding: 2px; border-radius: 5px;
+}
+.toast .tx:hover { color: var(--text); background: var(--panel-3); }
+.toast .tbar {
+  position: absolute; left: 0; bottom: 0; height: 2px; width: 100%;
+  transform-origin: left;
+  background: var(--accent); opacity: 0.55;
+  animation: tbar linear forwards;
+}
+.toast.ok .tbar { background: var(--ok); }
+.toast.error .tbar { background: var(--danger); }
+@keyframes tbar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* ---------- modal / confirm ---------- */
+.modal-veil {
+  position: fixed; inset: 0; z-index: 90;
+  display: grid; place-items: center; padding: 20px;
+  background: color-mix(in srgb, var(--text) 45%, transparent);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  animation: fade-in 0.2s var(--ease-out) both;
+}
+.modal {
+  position: relative;
+  width: 100%; max-width: 420px;
+  background: var(--panel); border: 1px solid var(--line-2);
+  border-radius: var(--radius); padding: 22px;
+  box-shadow: var(--shadow-pop);
+  animation: modal-in 0.32s var(--ease-spring) both;
+}
+@keyframes modal-in { from { transform: scale(0.94) translateY(8px); opacity: 0; } }
+@keyframes fade-in { from { opacity: 0; } }
+.modal .mhead { display: flex; gap: 13px; align-items: flex-start; margin-bottom: 10px; }
+.modal .micon { display: grid; place-items: center; flex: 0 0 40px; height: 40px; border-radius: 12px; }
+.modal .micon.danger {
+  background: var(--danger-soft);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  color: var(--danger);
+}
+.modal .micon.info { background: var(--accent-soft); border: 1px solid var(--accent-line); color: var(--accent); }
+.modal h2 { margin: 0 0 3px; font-size: 1.18em; }
+.modal .mdesc { color: var(--muted); font-size: 0.96em; }
+.modal .mfoot { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; }
+
+/* ---------- avatar ---------- */
+.avatar {
+  display: grid; place-items: center; flex: 0 0 auto;
+  border-radius: 50%; color: var(--on-accent); font-weight: 640;
+  background: var(--grad-brand); user-select: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 9%, transparent) inset;
+}
+.avatar.sm { width: 30px; height: 30px; font-size: 0.86em; }
+.avatar.md { width: 34px; height: 34px; font-size: 0.93em; }
+.avatar.lg { width: 56px; height: 56px; font-size: 1.5em; }
+
+/* ---------- copy button ---------- */
+.copy-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 7px; cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--line-2); color: var(--muted);
+  font: inherit; font-size: 0.82em; font-weight: 560;
+  transition: color var(--t-fast), border-color var(--t-fast), background var(--t-fast);
+}
+.copy-btn:hover { color: var(--text); border-color: var(--surface-hi); }
+.copy-btn.copied {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  background: var(--ok-soft);
+}
+
+/* ---------- launcher hero ----------
+ * The tile grid itself is styles.css's; only the greeting block and the two
+ * hover affordances are the kit's, so nothing here restates a .tile base rule.
+ */
+.hero {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  margin-bottom: 22px;
+  animation: rise-in 0.5s var(--ease-out) both;
+}
+.hero-body { flex: 1; min-width: 220px; }
+.hero-kicker {
+  font-size: 0.82em; font-weight: 620; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--accent); margin-bottom: 3px;
+}
+.hero h1 { margin: 0; }
+.sub { color: var(--muted); font-size: 0.96em; margin-top: 3px; }
+
+.tile { position: relative; overflow: hidden; --mx: 50%; --my: 50%; animation: rise-in 0.5s var(--ease-out) both; }
+/* Cursor-following wash. --mx/--my are set inline by the tile's mousemove. */
+.tile::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: radial-gradient(260px circle at var(--mx) var(--my),
+              color-mix(in srgb, var(--accent) 13%, transparent), transparent 65%);
+  opacity: 0; transition: opacity 0.25s var(--ease-out);
+}
+.tile:not(.locked):hover::after { opacity: 1; }
+.tile-body { flex: 1; min-width: 0; }
+.tile .open-aff {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.86em; font-weight: 580; color: var(--accent);
+  opacity: 0; transform: translateX(-4px);
+  transition: opacity var(--t-med), transform var(--t-med);
+}
+.tile:not(.locked):hover .open-aff { opacity: 1; transform: translateX(0); }
+.tile .lock-aff { display: inline-flex; align-items: center; gap: 5px; font-size: 0.86em; color: var(--faint); }
+
+/* ---------- motion preferences ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .toast-host { left: 14px; right: 14px; max-width: none; }
+}

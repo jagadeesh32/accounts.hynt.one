@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError, type Me } from "../api";
-import { Icon, PasswordField } from "../ui";
+import { AppearanceButton } from "../widgets/AppearancePanel";
 
 /**
  * The one password form in the estate.
@@ -19,7 +19,6 @@ export function LoginPage({ me, onSignedIn }: { me: Me | null; onSignedIn: () =>
   const [mfaRequired, setMfaRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [shakeKey, setShakeKey] = useState(0);
 
   // Already signed in and sent here by a platform: complete the flow silently
   // rather than asking for a password that is not needed.
@@ -52,66 +51,57 @@ export function LoginPage({ me, onSignedIn }: { me: Me | null; onSignedIn: () =>
       window.location.replace(next);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Sign-in failed.");
-      setShakeKey((k) => k + 1);
       setBusy(false);
     }
   }
 
   return (
     <div className="login-page">
+      <div className="login-corner">
+        <AppearanceButton />
+      </div>
+
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand">
           <span className="brand-mark big">H</span>
           <h1>Sign in to Hynt</h1>
-          <p className="sub">One account for Terminal, X-Terminal and Intelligence.</p>
+          <p className="muted">One account for Terminal, X-Terminal and Intelligence.</p>
         </div>
 
-        {error && (
-          <div key={shakeKey} className="alert error shake">
-            <Icon name="warning" size={15} />
-            <span>{error}</span>
-          </div>
-        )}
+        {error && <div className="alert error">{error}</div>}
 
         <label className="field">
-          <span><Icon name="mail" size={13} />Email</span>
-          <span className="input-wrap">
-            <span className="lead-icon"><Icon name="mail" size={15} /></span>
-            <input
-              type="email" value={email} autoFocus required autoComplete="username"
-              onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com"
-            />
-          </span>
+          <span>Email</span>
+          <input
+            type="email" value={email} autoFocus required autoComplete="username"
+            onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com"
+          />
         </label>
 
         <label className="field">
-          <span><Icon name="lock" size={13} />Password</span>
-          <PasswordField
-            value={password} onChange={setPassword} required
-            autoComplete="current-password" placeholder="Your password"
+          <span>Password</span>
+          <input
+            type="password" value={password} required autoComplete="current-password"
+            onChange={(e) => setPassword(e.target.value)}
           />
         </label>
 
         {mfaRequired && (
-          <label className="field mfa-reveal">
-            <span><Icon name="fingerprint" size={13} />Verification code</span>
+          <label className="field">
+            <span>Verification code</span>
             <input
               type="text" value={otp} autoFocus inputMode="numeric" maxLength={6}
-              className="otp-input" placeholder="· · · · · ·"
-              onChange={(e) => setOtp(e.target.value.replace(/[^\d]/g, ""))}
+              placeholder="123456" onChange={(e) => setOtp(e.target.value)}
             />
-            <small className="muted">Enter the 6-digit code from your authenticator app.</small>
+            <small className="muted">From your authenticator app.</small>
           </label>
         )}
 
         <button className="btn primary wide" type="submit" disabled={busy}>
-          {busy ? "Signing in" : mfaRequired ? "Verify and continue" : "Sign in"}
-          {!busy && <Icon name="arrow-right" size={15} />}
-          {busy && <span className="dots" />}
+          {busy ? "Signing in…" : mfaRequired ? "Verify and continue" : "Sign in"}
         </button>
 
-        <p className="fineprint">
-          <Icon name="shield-check" size={13} />
+        <p className="fineprint muted">
           Signing in here signs you in across every Hynt platform.
         </p>
       </form>
