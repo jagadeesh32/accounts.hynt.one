@@ -7,8 +7,10 @@ import { LauncherPage } from "./pages/Launcher";
 import { LoginPage } from "./pages/Login";
 import { SecurityPage } from "./pages/Security";
 import { MembersPage } from "./pages/Members";
+import { PlatformAnalyticsPage } from "./pages/PlatformAnalytics";
 import { PlansPage } from "./pages/Plans";
 import { EstateLayout } from "./pages/estate/EstateLayout";
+import { AnalyticsPage } from "./pages/estate/Analytics";
 import { AccountsPage } from "./pages/estate/Accounts";
 import { EstatePlatformsPage } from "./pages/estate/Platforms";
 import { ClientsPage } from "./pages/estate/Clients";
@@ -76,12 +78,14 @@ export function App() {
 
           {/* Per-platform administration. The rail links straight to a section,
               so /admin/:slug on its own lands on members rather than 404ing. */}
-          <Route path="/admin/:slug" element={<Navigate to="members" replace />} />
+          <Route path="/admin/:slug" element={<Navigate to="analytics" replace />} />
+          <Route path="/admin/:slug/analytics" element={<PlatformAnalyticsPage />} />
           <Route path="/admin/:slug/members" element={<MembersPage />} />
           <Route path="/admin/:slug/plans" element={<PlansPage />} />
 
           <Route path="/estate" element={<EstateLayout />}>
-            <Route index element={<Navigate to="accounts" replace />} />
+            <Route index element={<Navigate to="analytics" replace />} />
+            <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="accounts" element={<AccountsPage />} />
             <Route path="platforms" element={<EstatePlatformsPage />} />
             <Route path="clients" element={<ClientsPage />} />

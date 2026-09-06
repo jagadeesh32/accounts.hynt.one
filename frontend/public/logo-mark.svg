@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" role="img" aria-label="HYNT">
+  <title>HYNT</title>
+  <g fill="#ffffff">
+    <rect x="13" y="11" width="8" height="42" rx="4"/>
+    <rect x="43" y="11" width="8" height="42" rx="4"/>
+  </g>
+  <path d="M17 39 H28 L36 26 H47" fill="none" stroke="#ffffff" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

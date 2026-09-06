@@ -1,0 +1,343 @@
+/*
+ * Charts, tiles, readings and the data table.
+ *
+ * ── The palette ─────────────────────────────────────────────────────────────
+ * The seventeen themes recolour the whole UI from --accent, and that is right
+ * for chrome. It is wrong for data: series identity must not change meaning
+ * because someone picked Dracula, and a palette derived from one accent cannot
+ * hold eight categories apart for a reader with colour-vision deficiency.
+ *
+ * So the series slots below are FIXED, in two selected sets — one stepped for
+ * light surfaces, one for dark — chosen against this app's own panel colours
+ * and checked for CVD separation before being written down:
+ *
+ *   light, on #f7f8fa   worst adjacent pair ΔE 9.1 (protan), normal-vision 19.6
+ *   dark,  on #0b1120   worst adjacent pair ΔE 8.4 (protan), normal-vision 19.3
+ *
+ * Slots are assigned in order and never cycled: slot 1 is always slot 1, so a
+ * colour keeps meaning the same thing across a page, a filter and a reload.
+ * Three of the light slots (aqua, yellow, magenta) sit below 3:1 against the
+ * panel — legal here only because every chart carries direct labels and a
+ * "Numbers" view, which is why ChartCard's table toggle is not optional.
+ *
+ * Do not add a ninth slot. A generated hue is indistinguishable from an
+ * existing one under CVD; charts.tsx folds the tail into "Other" instead.
+ */
+
+:root {
+  --v1: #2a78d6;   /* blue    */
+  --v2: #eb6834;   /* orange  */
+  --v3: #1baf7a;   /* aqua    */
+  --v4: #eda100;   /* yellow  */
+  --v5: #e87ba4;   /* magenta */
+  --v6: #008300;   /* green   */
+  --v7: #4a3aa7;   /* violet  */
+  --v8: #e34948;   /* red     */
+
+  /* Sequential — one hue, light → dark. Magnitude only. */
+  --seq-100: #cde2fb; --seq-200: #9ec5f4; --seq-300: #6da7ec; --seq-400: #3987e5;
+  --seq-450: #2a78d6; --seq-500: #256abf; --seq-600: #184f95; --seq-700: #0d366b;
+
+  /* State — reserved. Never reused as a series colour. */
+  --st-good: #0ca30c;
+  --st-warning: #fab219;
+  --st-serious: #ec835a;
+  --st-critical: #d03b3b;
+}
+
+/* The dark column is the same eight hues re-stepped for a dark surface, not a
+   different palette — and the sequential ramp is reversed, because on a dark
+   ground "more" has to mean more light, not more ink. */
+html[data-mode="dark"] {
+  --v1: #3987e5; --v2: #d95926; --v3: #199e70; --v4: #c98500;
+  --v5: #d55181; --v6: #008300; --v7: #9085e9; --v8: #e66767;
+
+  --seq-100: #0d366b; --seq-200: #184f95; --seq-300: #256abf; --seq-400: #2a78d6;
+  --seq-450: #3987e5; --seq-500: #6da7ec; --seq-600: #9ec5f4; --seq-700: #cde2fb;
+}
+
+/* ============================================================
+   Layout: KPI row, chart grid
+   ============================================================ */
+
+.page-head .head-row {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+}
+
+/* A window change refetches; the board holds its last render meanwhile rather
+   than collapsing to skeletons and jumping when the numbers land. */
+.analytics.reloading .viz-grid, .analytics.reloading .kpi-row { opacity: 0.55; }
+.analytics .viz-grid, .analytics .kpi-row { transition: opacity 0.18s ease; }
+
+.kpi-row {
+  display: grid; gap: 12px; margin-bottom: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+}
+
+.viz-grid { display: grid; gap: 14px; margin-bottom: 16px; grid-template-columns: 1fr 1fr; }
+.viz-grid.three { grid-template-columns: repeat(3, 1fr); }
+.viz-grid.two { grid-template-columns: 1fr 1fr; }
+@media (max-width: 1180px) { .viz-grid.three { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 860px) { .viz-grid, .viz-grid.two, .viz-grid.three { grid-template-columns: 1fr; } }
+
+/* ============================================================
+   Stat tile
+   ============================================================ */
+
+.stat-tile {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 13px 14px;
+  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+  position: relative; overflow: hidden;
+}
+.stat-tile::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(240px 90px at 100% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%);
+}
+.stat-tile > * { position: relative; }
+.st-label {
+  font-size: 0.82em; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--muted);
+}
+/* Proportional figures, deliberately: tabular-nums gives every digit the width
+   of a zero, which makes a display-size number look gappy. */
+.st-value { font-size: 1.75em; font-weight: 650; line-height: 1.15; letter-spacing: -0.02em; }
+.st-foot { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+.st-delta { font-size: 0.82em; font-weight: 600; display: inline-flex; align-items: center; gap: 3px; }
+.st-delta.up { color: var(--st-good); }
+.st-delta.down { color: var(--st-critical); }
+.st-vs { color: var(--muted); font-weight: 500; }
+.st-hint { font-size: 0.82em; color: var(--muted); }
+.st-foot .spark { margin-left: auto; }
+.stat-tile.tone-warning { border-color: color-mix(in srgb, var(--st-warning) 45%, var(--line)); }
+.stat-tile.tone-critical { border-color: color-mix(in srgb, var(--st-critical) 45%, var(--line)); }
+.spark-empty { display: inline-block; width: 92px; height: 26px; }
+
+/* ============================================================
+   Chart card
+   ============================================================ */
+
+.chart-card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px 16px 12px;
+  display: flex; flex-direction: column; min-width: 0;
+}
+.chart-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.chart-id { min-width: 0; }
+.chart-id h3 { margin: 0; font-size: 1.02em; font-weight: 650; letter-spacing: -0.01em; }
+.chart-id p { margin: 3px 0 0; font-size: 0.86em; color: var(--muted); line-height: 1.4; }
+.chart-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.chart-toggle {
+  font: inherit; font-size: 0.82em; font-weight: 600;
+  padding: 4px 9px; border-radius: 999px; cursor: pointer;
+  background: transparent; border: 1px solid var(--line); color: var(--muted);
+}
+.chart-toggle:hover { color: var(--text); border-color: var(--line-2); }
+.chart-toggle.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+.chart-body { flex: 1; display: flex; flex-direction: column; gap: 12px; justify-content: center; }
+
+.chart-table-wrap { max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.chart-table { width: 100%; border-collapse: collapse; font-size: 0.89em; }
+.chart-table th {
+  position: sticky; top: 0; background: var(--panel-2); text-align: left;
+  padding: 7px 10px; font-size: 0.92em; color: var(--muted); font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+.chart-table td { padding: 6px 10px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.chart-table tr:last-child td { border-bottom: none; }
+
+/* ============================================================
+   SVG chart chrome
+   ============================================================ */
+
+.viz { position: relative; width: 100%; }
+.viz-grid-line, .viz-grid { stroke: var(--line); stroke-width: 1; }
+.viz-tick { fill: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.viz-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.viz-area { opacity: 0.1; }
+/* The 2px surface ring is what keeps a dot legible where it crosses a line. */
+.viz-dot { stroke: var(--panel); stroke-width: 2; }
+.viz-cross { stroke: var(--line-2); stroke-width: 1; stroke-dasharray: none; }
+.heat-cell { transition: opacity 0.12s ease; }
+.heat-cell:hover { opacity: 0.72; }
+.viz-empty { color: var(--muted); font-size: 0.89em; margin: 8px 0; }
+
+.viz-legend {
+  display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px;
+  font-size: 0.86em; color: var(--text-2);
+}
+.viz-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.viz-key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.viz-key.line { width: 14px; height: 3px; border-radius: 2px; }
+
+.viz-tip {
+  position: absolute; z-index: 5; pointer-events: none;
+  transform: translate(10px, 0);
+  background: var(--panel); border: 1px solid var(--line-2);
+  border-radius: 8px; padding: 7px 9px; min-width: 108px;
+  box-shadow: var(--shadow-pop); font-size: 0.86em;
+}
+.viz-tip.flip { transform: translate(calc(-100% - 10px), 0); }
+.viz-tip-title { color: var(--muted); font-size: 0.92em; margin-bottom: 3px; }
+.viz-tip-row { display: flex; align-items: center; gap: 6px; line-height: 1.5; }
+/* Value leads, label follows — the reader already knows the series. */
+.viz-tip-value { font-weight: 650; font-variant-numeric: tabular-nums; }
+.viz-tip-label { color: var(--muted); }
+
+/* ============================================================
+   Bar list · stacked bar · meter
+   ============================================================ */
+
+.barlist { display: flex; flex-direction: column; gap: 7px; }
+.barlist-row { display: grid; grid-template-columns: minmax(70px, 34%) 1fr auto; gap: 10px; align-items: center; }
+.bl-label {
+  font-size: 0.89em; color: var(--text-2); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.bl-track { height: 9px; background: var(--panel-2); border-radius: 5px; overflow: hidden; }
+.bl-fill { display: block; height: 100%; border-radius: 5px; }
+.bl-value { font-size: 0.86em; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+
+.stackwrap { display: flex; flex-direction: column; gap: 10px; }
+/* The 2px gap is the surface doing the separating — never a stroke on the mark. */
+.stack { display: flex; gap: 2px; height: 26px; }
+.stack-part { border-radius: 3px; min-width: 3px; }
+.stack-part:first-child { border-radius: 5px 3px 3px 5px; }
+.stack-part:last-child { border-radius: 3px 5px 5px 3px; }
+.stack-part.empty { background: var(--panel-2); }
+.stack-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.86em; color: var(--text-2); }
+.stack-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.stack-legend b { font-weight: 650; font-variant-numeric: tabular-nums; }
+.stack-legend i { color: var(--muted); font-style: normal; font-size: 0.92em; }
+
+.meter { display: flex; flex-direction: column; gap: 5px; }
+.meter-top { display: flex; justify-content: space-between; font-size: 0.89em; color: var(--text-2); }
+.meter-top b { font-variant-numeric: tabular-nums; }
+/* Track is a lighter step of the fill's own ramp, so state reads across the
+   whole bar rather than only in the filled part. */
+.meter-track { height: 8px; border-radius: 5px; background: var(--seq-100); overflow: hidden; }
+.meter-track span { display: block; height: 100%; border-radius: 5px; background: var(--seq-450); }
+.meter-track.tone-warning { background: color-mix(in srgb, var(--st-warning) 22%, transparent); }
+.meter-track.tone-warning span { background: var(--st-warning); }
+.meter-track.tone-critical { background: color-mix(in srgb, var(--st-critical) 18%, transparent); }
+.meter-track.tone-critical span { background: var(--st-critical); }
+.meter-foot { font-size: 0.82em; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.mini-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.mini-facts div { display: flex; flex-direction: column; }
+.mini-facts b { font-size: 1.5em; font-weight: 650; line-height: 1.2; }
+.mini-facts span { font-size: 0.82em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+/* ============================================================
+   Insights
+   ============================================================ */
+
+.insights {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 16px; margin-bottom: 16px;
+}
+.insights > header { margin-bottom: 12px; }
+.insights h2 { margin: 0 0 3px; }
+.insights > header p { margin: 0; font-size: 0.86em; }
+.insight-list { display: grid; gap: 8px; }
+.insight {
+  display: flex; align-items: flex-start; gap: 11px;
+  padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg-2);
+}
+/* Severity is carried by an outlined mark AND the word beside it — a colour
+   alone would leave the ordering invisible to a reader who cannot see it. */
+.ins-mark { width: 9px; height: 9px; border-radius: 3px; margin-top: 5px; flex-shrink: 0; }
+.insight.sev-critical { border-color: color-mix(in srgb, var(--st-critical) 45%, var(--line)); }
+.insight.sev-critical .ins-mark { background: var(--st-critical); }
+.insight.sev-warning { border-color: color-mix(in srgb, var(--st-warning) 45%, var(--line)); }
+.insight.sev-warning .ins-mark { background: var(--st-warning); }
+.insight.sev-info .ins-mark { background: var(--seq-450); }
+.insight.sev-good .ins-mark { background: var(--st-good); }
+.ins-body { min-width: 0; flex: 1; }
+.ins-body h3 {
+  margin: 0 0 3px; font-size: 0.96em; font-weight: 650;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.ins-sev {
+  font-size: 0.76em; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 5px; background: var(--panel-2); color: var(--muted);
+}
+.sev-critical .ins-sev { color: var(--st-critical); background: color-mix(in srgb, var(--st-critical) 12%, transparent); }
+.sev-warning .ins-sev { color: var(--st-warning); background: color-mix(in srgb, var(--st-warning) 14%, transparent); }
+.sev-good .ins-sev { color: var(--st-good); background: color-mix(in srgb, var(--st-good) 12%, transparent); }
+.ins-body p { margin: 0; font-size: 0.89em; color: var(--text-2); line-height: 1.5; }
+.insight .btn { flex-shrink: 0; }
+
+/* ============================================================
+   DataTable
+   ============================================================ */
+
+.dt { display: flex; flex-direction: column; gap: 10px; }
+.dt.loading { opacity: 0.6; }
+.dt-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.dt-spacer { flex: 1; }
+.dt-search {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--muted); min-width: 200px;
+}
+.dt-search:focus-within { border-color: var(--accent); box-shadow: var(--ring); }
+.dt-search input { border: 0; background: transparent; padding: 0; width: 100%; font: inherit; color: var(--text); outline: none; }
+.dt-clear { border: 0; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; }
+.dt-facet { width: auto; padding: 6px 9px; font-size: 0.92em; }
+
+.dt-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+.dt-table { width: 100%; border-collapse: collapse; }
+.dt-table th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--panel-2); text-align: left; white-space: nowrap;
+  font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); font-weight: 600;
+  padding: 8px 12px; border-bottom: 1px solid var(--line);
+}
+.dt-sort {
+  font: inherit; font-size: 1em; font-weight: 600; letter-spacing: inherit; text-transform: inherit;
+  background: transparent; border: 0; padding: 0; color: inherit; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.dt-sort:hover { color: var(--text); }
+.dt-sort.on { color: var(--accent); }
+.dt-arrow { opacity: 0.5; font-size: 0.9em; }
+.dt-sort.on .dt-arrow { opacity: 1; }
+.dt-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.dt-table tbody tr:last-child td { border-bottom: none; }
+.dt-table tbody tr:hover { background: var(--panel-2); }
+.dt.dense .dt-table td { padding: 6px 12px; }
+.dt-empty td { color: var(--muted); text-align: center; padding: 26px 12px; }
+
+.dt-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; font-size: 0.86em; color: var(--muted);
+}
+.dt-count { font-variant-numeric: tabular-nums; }
+.dt-note { color: var(--muted); }
+.dt-pager { display: inline-flex; align-items: center; gap: 5px; }
+.dt-pager select { width: auto; padding: 4px 7px; font-size: 0.95em; }
+.dt-page {
+  min-width: 26px; height: 26px; border-radius: 7px; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line); color: var(--text-2);
+  font: inherit; line-height: 1;
+}
+.dt-page:hover:not(:disabled) { border-color: var(--line-2); color: var(--text); }
+.dt-page:disabled { opacity: 0.4; cursor: default; }
+.dt-pageno { padding: 0 6px; font-variant-numeric: tabular-nums; }
+
+/* Action buttons wrap rather than forcing a horizontal scroll on the row. */
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.row-actions .btn.small { margin-left: 0; }
+
+/* Numbers that carry a share read as one cell, not two columns. */
+.cell-ratio { font-variant-numeric: tabular-nums; }
+.cell-ratio i { font-style: normal; color: var(--muted); margin-left: 6px; font-size: 0.9em; }
+
+@media (max-width: 720px) {
+  .kpi-row { grid-template-columns: 1fr 1fr; }
+  .dt-search { min-width: 140px; }
+}

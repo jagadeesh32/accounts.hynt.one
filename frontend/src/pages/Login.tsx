@@ -63,7 +63,7 @@ export function LoginPage({ me, onSignedIn }: { me: Me | null; onSignedIn: () =>
 
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand">
-          <span className="brand-mark big">H</span>
+          <img className="brand-mark big" src="/logo.svg" width={42} height={42} alt="Hynt" draggable={false} />
           <h1>Sign in to Hynt</h1>
           <p className="muted">One account for Terminal, X-Terminal and Intelligence.</p>
         </div>

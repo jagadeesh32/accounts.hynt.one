@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type Me, type SessionRow } from "../api";
+import { DataTable } from "../widgets/DataTable";
 
 export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void }) {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
@@ -140,30 +141,40 @@ export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void 
             () => api.post("/api/v1/auth/sessions/revoke-others"), "Other devices signed out.",
           )}>Sign out everywhere else</button>
         </div>
-        <table className="table">
-          <thead>
-            <tr><th>Device</th><th>IP</th><th>Last seen</th><th /></tr>
-          </thead>
-          <tbody>
-            {sessions.map((s) => (
-              <tr key={s.id}>
-                <td>
+        <DataTable
+          id="my-sessions"
+          rows={sessions}
+          getKey={(s) => s.id}
+          initialSort="seen"
+          dense
+          searchPlaceholder="Search device or IP"
+          columns={[
+            {
+              key: "device", header: "Device", value: (s) => shortenAgent(s.user_agent),
+              render: (s) => (
+                <>
                   {shortenAgent(s.user_agent)}
                   {s.current && <span className="chip small">this device</span>}
-                </td>
-                <td className="mono">{s.ip}</td>
-                <td>{new Date(s.last_seen_at).toLocaleString()}</td>
-                <td className="right">
-                  {!s.current && (
-                    <button className="btn small danger" onClick={() => void act(
-                      () => api.del(`/api/v1/auth/sessions/${s.id}`), "Device signed out.",
-                    )}>Sign out</button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </>
+              ),
+            },
+            { key: "ip", header: "IP", value: (s) => s.ip ?? "", className: "mono" },
+            {
+              key: "seen", header: "Last seen", value: (s) => s.last_seen_at,
+              render: (s) => new Date(s.last_seen_at).toLocaleString(),
+            },
+            {
+              key: "out", header: "", align: "right",
+              render: (s) => (
+                !s.current && (
+                  <button className="btn small danger" onClick={() => void act(
+                    () => api.del(`/api/v1/auth/sessions/${s.id}`), "Device signed out.",
+                  )}>Sign out</button>
+                )
+              ),
+            },
+          ]}
+        />
       </div>
     </section>
   );

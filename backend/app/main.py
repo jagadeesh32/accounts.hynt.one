@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import admin, auth, me, oauth, public, superadmin
+from app.api import admin, analytics, auth, me, oauth, public, superadmin
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -43,6 +43,10 @@ app.include_router(oauth.router)
 app.include_router(me.router)
 app.include_router(admin.router)
 app.include_router(superadmin.router)
+# Aggregates for both consoles: the estate-wide board (superadmin) and the
+# per-platform one (gated on rank, same as the rest of app.api.admin).
+app.include_router(analytics.router)
+app.include_router(analytics.platform_router)
 
 
 @app.exception_handler(Exception)

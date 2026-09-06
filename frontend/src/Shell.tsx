@@ -68,6 +68,7 @@ export function Shell({
       out.push({
         label: platforms.length === 1 ? "Administration" : "Administer",
         items: platforms.flatMap((p) => [
+          { to: `/admin/${p.slug}/analytics`, label: `${p.name} · Analytics`, icon: "◑" },
           { to: `/admin/${p.slug}/members`, label: `${p.name} · Members`, icon: "◔" },
           { to: `/admin/${p.slug}/plans`, label: `${p.name} · Plans`, icon: "◍" },
         ]),
@@ -78,6 +79,7 @@ export function Shell({
       out.push({
         label: "Estate",
         items: [
+          { to: "/estate/analytics", label: "Analytics", icon: "◑" },
           { to: "/estate/accounts", label: "Accounts", icon: "◉" },
           { to: "/estate/platforms", label: "Platforms", icon: "▦" },
           { to: "/estate/clients", label: "OAuth clients", icon: "⬡" },
@@ -94,25 +96,28 @@ export function Shell({
     <div className={`shell ${collapsed ? "collapsed" : ""} ${railOpen ? "rail-open" : ""}`}>
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-mark">H</span>
+          <img className="brand-mark" src="/logo.svg" width={28} height={28} alt="" draggable={false} />
           <span className="brand-text">
             <span className="brand-name">Hynt</span>
             <span className="brand-tag">Accounts</span>
           </span>
+          {/* Pin, not "expand": collapsing does not take the rail away, it makes
+              it auto-hide - a mini strip that opens over the page on hover. */}
           <button
             className="rail-toggle"
             onClick={() => setCollapsed((c) => !c)}
-            aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
-            title={collapsed ? "Expand" : "Collapse"}
+            aria-pressed={!collapsed}
+            aria-label={collapsed ? "Pin navigation open" : "Auto-hide navigation"}
+            title={collapsed ? "Pin open" : "Auto-hide"}
           >
-            {collapsed ? "»" : "«"}
+            {collapsed ? "\u00bb" : "\u00ab"}
           </button>
         </div>
 
         <nav className="nav">
           {groups.map((g) => (
             <div className="nav-group" key={g.label}>
-              <div className="nav-label">{g.label}</div>
+              <div className="nav-label"><span>{g.label}</span></div>
               {g.items.map((item) => (
                 <NavLink
                   key={item.to}
@@ -135,7 +140,17 @@ export function Shell({
         <div className="rail-foot">
           <span className="muted">One account for every Hynt platform</span>
         </div>
+
+        {/* Compact rail only: the strip that says the rail is still there and
+            opens on hover. Pointer-events off so it never eats the hover. */}
+        <div className="rail-peek-hint" aria-hidden="true" />
       </aside>
+
+      {/* Narrow screens only (the rail is a slide-over there): tapping the page
+          behind it closes it, which is what every drawer on a phone does. */}
+      {railOpen && (
+        <button className="rail-scrim" aria-label="Close navigation" onClick={() => setRailOpen(false)} />
+      )}
 
       <header className="topbar">
         <button

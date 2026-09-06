@@ -77,15 +77,22 @@ a { color: inherit; text-decoration: none; }
  * as one product, but every colour here is one of this app's own tokens — the
  * seventeen palettes in styles/themes.css keep working untouched.
  *
+ * The rail has two shapes, not two sizes. PINNED it holds its column and the
+ * page sits beside it. AUTO-HIDDEN it shrinks to an icon strip and, on hover or
+ * keyboard focus, floats back out to full width OVER the page — the column
+ * stays narrow, so nothing reflows and the page never jumps under the pointer.
+ * That is the whole point of auto-hide: the width is given back to the content.
+ *
  * --accent-soft and --accent-line are NOT defined here on purpose: themes.css
  * already derives both from --accent, and a second definition would win or lose
  * on import order alone — the kind of conflict that shows up as one palette
  * looking subtly wrong months later.
  */
 :root {
-  --rail-w: 244px;
-  --rail-mini: 64px;
+  --rail-w: 248px;
+  --rail-mini: 68px;
   --topbar-h: 56px;
+  --rail-ease: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .shell {
@@ -94,19 +101,36 @@ a { color: inherit; text-decoration: none; }
   grid-template-rows: var(--topbar-h) 1fr;
   grid-template-areas: "side top" "side main";
   min-height: 100vh;
-  transition: grid-template-columns 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: grid-template-columns 0.26s var(--rail-ease);
 }
 .shell.collapsed { grid-template-columns: var(--rail-mini) 1fr; }
 
 /* ---------- rail ---------- */
 .sidebar {
   grid-area: side;
-  background: var(--panel);
+  z-index: 30;
+  width: 100%;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  backdrop-filter: blur(16px) saturate(1.35);
+  -webkit-backdrop-filter: blur(16px) saturate(1.35);
   border-right: 1px solid var(--line);
   display: flex; flex-direction: column;
   overflow: hidden;
   position: sticky; top: 0; height: 100vh;
+  transition:
+    width 0.26s var(--rail-ease),
+    box-shadow 0.26s var(--rail-ease),
+    border-radius 0.26s var(--rail-ease);
 }
+/* Ambient brand wash bleeding from the top corner — the depth cue that makes
+   the rail read as chrome rather than as another panel. */
+.sidebar::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(320px 160px at 0% 0%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 70%),
+    linear-gradient(180deg, transparent 60%, color-mix(in srgb, var(--accent-2) 6%, transparent));
+}
+.sidebar > * { position: relative; z-index: 1; }
 
 .brand {
   height: var(--topbar-h); flex-shrink: 0;
@@ -114,12 +138,11 @@ a { color: inherit; text-decoration: none; }
   padding: 0 14px; border-bottom: 1px solid var(--line);
 }
 .brand-mark {
-  display: grid; place-items: center; flex-shrink: 0;
+  display: block; flex-shrink: 0;
   width: 28px; height: 28px; border-radius: 8px;
-  background: var(--grad-brand);
-  color: var(--on-accent); font-weight: 700; font-size: 14px;
+  box-shadow: 0 2px 10px -3px color-mix(in srgb, var(--accent) 60%, transparent);
 }
-.brand-mark.big { width: 42px; height: 42px; font-size: 20px; border-radius: 11px; }
+.brand-mark.big { width: 42px; height: 42px; border-radius: 12px; }
 .brand-text { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
 .brand-name {
   white-space: nowrap; font-weight: 700; font-size: 14px;
@@ -130,22 +153,22 @@ a { color: inherit; text-decoration: none; }
   font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--muted); white-space: nowrap;
 }
-.shell.collapsed .brand-text { display: none; }
-.shell.collapsed .brand { justify-content: center; padding: 0; }
 
 .rail-toggle {
   margin-left: auto; flex-shrink: 0;
   width: 26px; height: 26px; border-radius: 7px;
   background: transparent; border: 1px solid var(--line);
   color: var(--muted); cursor: pointer; font-size: 12px; line-height: 1;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
 }
-.rail-toggle:hover { background: var(--panel-2); color: var(--text); }
-.shell.collapsed .brand .rail-toggle { display: none; }
+.rail-toggle:hover { background: var(--panel-2); color: var(--text); border-color: var(--line-2); }
+.rail-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .rail-toggle.in-top { display: none; margin-left: 0; }
 
 .nav {
   flex: 1; overflow-y: auto; overflow-x: hidden;
   padding: 10px 10px 16px; display: flex; flex-direction: column; gap: 2px;
+  scrollbar-width: thin;
 }
 .nav-group { display: flex; flex-direction: column; gap: 2px; }
 .nav-label {
@@ -154,18 +177,10 @@ a { color: inherit; text-decoration: none; }
   text-transform: uppercase; color: var(--muted);
   padding: 14px 4px 6px; white-space: nowrap;
 }
+.nav-label span { flex-shrink: 0; }
 .nav-label::after {
   content: ""; flex: 1; height: 1px;
   background: linear-gradient(90deg, var(--line), transparent);
-}
-/* Collapsed: the words go, a short hairline keeps the grouping legible. */
-.shell.collapsed .nav-label {
-  font-size: 0; color: transparent; padding: 8px 0 4px;
-  justify-content: center;
-}
-.shell.collapsed .nav-label::after { display: none; }
-.shell.collapsed .nav-label::before {
-  content: ""; display: block; width: 16px; height: 1px; background: var(--line-2);
 }
 
 .nav-item {
@@ -174,7 +189,7 @@ a { color: inherit; text-decoration: none; }
   color: var(--text-2); font-weight: 500; font-size: 13px;
   border: 1px solid transparent; position: relative;
   white-space: nowrap; cursor: pointer;
-  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
 }
 .nav-item .ic {
   flex-shrink: 0; width: 26px; height: 26px; border-radius: 7px;
@@ -183,10 +198,8 @@ a { color: inherit; text-decoration: none; }
   transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
 }
 .nav-item .label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-.shell.collapsed .nav-item { justify-content: center; padding: 6px 0; }
-.shell.collapsed .nav-item .label { display: none; }
 
-.nav-item:hover { background: var(--panel-2); color: var(--text); }
+.nav-item:hover { background: var(--panel-2); color: var(--text); transform: translateX(1.5px); }
 .nav-item:hover .ic { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 .nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .nav-item.active {
@@ -195,28 +208,91 @@ a { color: inherit; text-decoration: none; }
 }
 .nav-item.active .ic {
   color: var(--on-accent); background: var(--grad-brand); border-color: transparent;
+  box-shadow: 0 0 12px -2px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 .nav-item.active::before {
   content: ""; position: absolute; left: -11px; top: 50%;
   transform: translateY(-50%);
   width: 3px; height: 20px; border-radius: 0 3px 3px 0;
   background: var(--grad-brand);
+  box-shadow: 0 0 10px var(--accent-line);
 }
-.shell.collapsed .nav-item.active::before { left: -10px; }
 
 .rail-foot {
   flex-shrink: 0; padding: 12px 14px;
   border-top: 1px solid var(--line); font-size: 11.5px; line-height: 1.4;
 }
-.shell.collapsed .rail-foot { display: none; }
+
+/* The hint strip: only the auto-hidden rail shows it. */
+.rail-peek-hint { display: none; }
+
+/* ---------- auto-hide ----------
+ *
+ * `.shell.collapsed` narrows the grid column for good; the rail itself is only
+ * compact while it is NOT hovered and holds no focus. Drop either condition and
+ * every rule below stops applying at once, so the full rail comes back with no
+ * "expanded" class to keep in sync — and, because it goes `fixed` at the same
+ * moment, it opens over the page instead of pushing it.
+ */
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .brand { justify-content: center; padding: 0; }
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .brand-text,
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .brand .rail-toggle,
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .nav-item .label,
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .nav-label span,
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .nav-label::after,
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .rail-foot { display: none; }
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .nav { padding: 10px 8px 16px; }
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .nav-item { justify-content: center; padding: 6px 0; }
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .nav-item.active::before { left: -9px; }
+/* Words gone, a hairline keeps the grouping legible. */
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .nav-label {
+  padding: 10px 0 5px; justify-content: center;
+}
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .nav-label::before {
+  content: ""; display: block; width: 18px; height: 1px; background: var(--line-2);
+}
+/* The grab edge — a soft brand seam that says the rail opens here. */
+.shell.collapsed .sidebar:not(:hover):not(:focus-within) .rail-peek-hint {
+  display: block; position: absolute; top: 0; right: 0; bottom: 0;
+  width: 2px; pointer-events: none; z-index: 2;
+  background: linear-gradient(180deg, transparent, var(--accent-line) 22%, var(--accent-line) 78%, transparent);
+  opacity: 0.75;
+}
+
+/* Peeked open: the rail leaves the grid and floats over the page. */
+.shell.collapsed .sidebar:hover,
+.shell.collapsed .sidebar:focus-within {
+  position: fixed; top: 0; left: 0; height: 100vh;
+  width: var(--rail-w); z-index: 60;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  border-radius: 0 14px 14px 0;
+  box-shadow: var(--shadow-pop);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell, .sidebar { transition: none; }
+  .nav-item:hover { transform: none; }
+}
 
 /* ---------- top bar ---------- */
 .topbar {
   grid-area: top;
   display: flex; align-items: center; gap: 16px;
   padding: 0 20px;
-  background: var(--panel); border-bottom: 1px solid var(--line);
-  position: sticky; top: 0; z-index: 10;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  backdrop-filter: blur(16px) saturate(1.35);
+  -webkit-backdrop-filter: blur(16px) saturate(1.35);
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 20;
+}
+/* Brand-gradient hairline under the bar, fading out to the right. */
+.topbar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--accent) 55%, transparent),
+    color-mix(in srgb, var(--accent-2) 30%, transparent) 32%,
+    transparent 70%);
 }
 .top-spacer { flex: 1; }
 
@@ -225,20 +301,44 @@ a { color: inherit; text-decoration: none; }
 .who-name { font-weight: 500; display: flex; align-items: center; gap: 6px; }
 .who-email { color: var(--muted); font-size: 12px; }
 
-.main { grid-area: main; padding: 26px 24px 48px; min-width: 0; }
-.page { max-width: 1060px; margin: 0 auto; }
+/* ---------- page area ----------
+ * The page takes the container it is given. There is no centred reading column
+ * here: these are tables, member lists and audit logs, and every pixel the rail
+ * gives back on auto-hide has to land in the content, not in a margin. */
+.main { grid-area: main; padding: 24px 26px 48px; min-width: 0; }
+.page { width: 100%; max-width: none; margin: 0; }
 .page-head { margin-bottom: 18px; }
 .foot { padding: 16px 20px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); }
 
 /* Under ~860px the rail becomes a slide-over rather than eating the width. */
+.rail-scrim { display: none; }
 @media (max-width: 860px) {
   .shell, .shell.collapsed { grid-template-columns: 1fr; grid-template-areas: "top" "main"; }
   .sidebar { display: none; }
   .rail-toggle.in-top { display: grid; place-items: center; }
   .shell.rail-open { grid-template-areas: "top" "main"; }
-  .shell.rail-open .sidebar {
+  /* Touch has no hover, so the drawer is always the full rail — the auto-hide
+     rules above are neutralised here rather than left to fire on a tap. */
+  .shell.rail-open .sidebar,
+  .shell.rail-open.collapsed .sidebar:not(:hover):not(:focus-within) {
     display: flex; position: fixed; inset: 0 auto 0 0;
     width: var(--rail-w); z-index: 50; box-shadow: var(--shadow-pop);
+    border-radius: 0 14px 14px 0;
+  }
+  .shell.rail-open.collapsed .sidebar:not(:hover):not(:focus-within) .brand { justify-content: flex-start; padding: 0 14px; }
+  .shell.rail-open.collapsed .sidebar:not(:hover):not(:focus-within) .brand-text,
+  .shell.rail-open.collapsed .sidebar:not(:hover):not(:focus-within) .nav-item .label,
+  .shell.rail-open.collapsed .sidebar:not(:hover):not(:focus-within) .nav-label span { display: block; }
+  .shell.rail-open.collapsed .sidebar:not(:hover):not(:focus-within) .rail-foot { display: block; }
+  .shell.rail-open.collapsed .sidebar:not(:hover):not(:focus-within) .nav-item { justify-content: flex-start; padding: 7px 8px; }
+  .shell.rail-open.collapsed .sidebar:not(:hover):not(:focus-within) .nav-label { justify-content: flex-start; padding: 14px 4px 6px; }
+  .shell.rail-open.collapsed .sidebar:not(:hover):not(:focus-within) .nav-label::before { display: none; }
+  .shell.rail-open.collapsed .sidebar:not(:hover):not(:focus-within) .rail-peek-hint { display: none; }
+  .shell.rail-open .rail-scrim {
+    display: block; position: fixed; inset: 0; z-index: 45;
+    border: 0; padding: 0; cursor: pointer;
+    background: rgba(16, 26, 40, 0.34);
+    backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
   }
 }
 

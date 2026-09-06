@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api";
 import { NoteBanner, useNote } from "../../lib/useNote";
 import { Drawer, Field, ListField } from "../../widgets/Drawer";
+import { DataTable } from "../../widgets/DataTable";
 
 interface ClientRow {
   client_id: string; name: string; platform: string;
@@ -61,7 +62,7 @@ export function ClientsPage() {
 
       <div className="card">
         <div className="card-head">
-          <h2>{rows.length} client{rows.length === 1 ? "" : "s"}</h2>
+          <h2>OAuth clients</h2>
           <button
             className="btn primary"
             onClick={() => setDraft({
@@ -72,24 +73,53 @@ export function ClientsPage() {
             New client
           </button>
         </div>
-        <table className="table">
-          <thead><tr><th>Client</th><th>Platform</th><th>Redirect URIs</th><th /></tr></thead>
-          <tbody>
-            {rows.map((c) => (
-              <tr key={c.client_id} className={c.is_active ? "" : "dim"}>
-                <td><span className="mono">{c.client_id}</span><div className="who-email">{c.name}</div></td>
-                <td>{c.platform}</td>
-                <td className="mono small-text">{c.redirect_uris.join("\n")}</td>
-                <td className="right">
-                  <button className="btn small ghost" onClick={() => setDraft({
-                    client_id: c.client_id, name: c.name, platform: c.platform,
-                    redirect_uris: c.redirect_uris, is_public: c.is_public ?? true, isNew: false,
-                  })}>Edit</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable
+          id="estate-clients"
+          rows={rows}
+          getKey={(c) => c.client_id}
+          initialSort="client"
+          initialDir="asc"
+          exportName="hynt-oauth-clients"
+          searchPlaceholder="Search client id, name or URI"
+          facets={[
+            { key: "platform", label: "Platform", of: (c) => c.platform },
+            { key: "kind", label: "Kind", of: (c) => (c.is_public ? "public (PKCE)" : "confidential") },
+          ]}
+          columns={[
+            {
+              key: "client", header: "Client", value: (c) => `${c.client_id} ${c.name}`,
+              render: (c) => (
+                <div className="who-text">
+                  <span className="mono">{c.client_id}</span>
+                  <span className="who-email">{c.name}</span>
+                </div>
+              ),
+            },
+            { key: "platform", header: "Platform", value: (c) => c.platform },
+            {
+              key: "kind", header: "Kind", value: (c) => (c.is_public ? "public" : "confidential"),
+              render: (c) => <span className="chip">{c.is_public ? "public · PKCE" : "confidential"}</span>,
+            },
+            {
+              key: "uris", header: "Redirect URIs",
+              value: (c) => c.redirect_uris.join(" "),
+              render: (c) => <span className="mono small-text">{c.redirect_uris.join("\n")}</span>,
+            },
+            {
+              key: "state", header: "State", value: (c) => (c.is_active ? "active" : "off"),
+              render: (c) => <span className={`chip ${c.is_active ? "ok-chip" : "warn"}`}>{c.is_active ? "active" : "off"}</span>,
+            },
+            {
+              key: "edit", header: "", align: "right",
+              render: (c) => (
+                <button className="btn small ghost" onClick={() => setDraft({
+                  client_id: c.client_id, name: c.name, platform: c.platform,
+                  redirect_uris: c.redirect_uris, is_public: c.is_public ?? true, isNew: false,
+                })}>Edit</button>
+              ),
+            },
+          ]}
+        />
       </div>
 
       <Drawer

@@ -14,6 +14,9 @@ import "./styles.css";
 import "./styles/themes.css";
 import "./styles/kit.css";
 import "./styles/appearance.css";
+// Last: the data-viz layer defines its own fixed series palette, which must not
+// be recoloured by whichever of the seventeen themes is active.
+import "./styles/charts.css";
 
 // Paint the saved appearance before React mounts.
 //

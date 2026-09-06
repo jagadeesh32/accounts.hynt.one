@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
+import { BarList, ChartCard, StackedBar, StatTile, fmtInr, foldToSlots } from "../charts";
 import { NoteBanner, useNote } from "../lib/useNote";
 import { Drawer, Field, JsonField, ListField } from "../widgets/Drawer";
+import { DataTable } from "../widgets/DataTable";
 
 interface PlanRow {
   slug: string; name: string; price_inr: number; is_default: boolean;
@@ -43,6 +45,22 @@ export function PlansPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Revenue is the plan price times the members actually on it, normalised to a
+  // month — a yearly plan is not twelve months of revenue in a monthly figure.
+  const shape = useMemo(() => {
+    const rows = plans.map((p) => {
+      const count = members.filter((m) => m.plan === p.slug).length;
+      const perMonth = p.interval === "year" ? p.price_inr / 12 : p.interval === "once" ? 0 : p.price_inr;
+      return { ...p, count, monthly: Math.round(perMonth * count) };
+    });
+    return {
+      rows,
+      mrr: rows.reduce((s2, r) => s2 + r.monthly, 0),
+      unsubscribed: members.filter((m) => !m.plan).length,
+      paying: rows.filter((r) => r.price_inr > 0).reduce((s2, r) => s2 + r.count, 0),
+    };
+  }, [plans, members]);
+
   async function savePlan() {
     if (!draft) return;
     setSaving(true);
@@ -82,50 +100,100 @@ export function PlansPage() {
 
       <NoteBanner note={note} />
 
+      <div className="kpi-row">
+        <StatTile label="Plans" value={plans.length} hint={`on ${slug}`} />
+        <StatTile label="Monthly revenue" value={fmtInr(shape.mrr)} hint="price × members, normalised to a month" />
+        <StatTile label="Paying members" value={shape.paying} hint={`of ${members.length} members`} />
+        <StatTile
+          label="No subscription" value={shape.unsubscribed}
+          hint="role access, no entitlements"
+          tone={members.length && shape.unsubscribed / members.length > 0.5 ? "warning" : undefined}
+        />
+      </div>
+
+      <div className="viz-grid two">
+        <ChartCard
+          title="Members per plan"
+          subtitle="Where this platform's members actually sit."
+          table={{ columns: ["Plan", "Members"], rows: shape.rows.map((r) => [r.name, r.count]) }}
+        >
+          <StackedBar parts={foldToSlots(shape.rows, (r) => r.count, (r) => r.name)} />
+        </ChartCard>
+
+        <ChartCard
+          title="Revenue per plan"
+          subtitle="Monthly value of the members on each plan."
+          table={{ columns: ["Plan", "₹ / month"], rows: shape.rows.map((r) => [r.name, r.monthly]) }}
+        >
+          <BarList rows={shape.rows.map((r) => ({ label: r.name, value: r.monthly }))} format={fmtInr} />
+        </ChartCard>
+      </div>
+
       <div className="card">
         <div className="card-head">
-          <h2>{plans.length} plan{plans.length === 1 ? "" : "s"}</h2>
+          <h2>Plans</h2>
           <button className="btn primary" onClick={() => setDraft({ ...EMPTY })}>New plan</button>
         </div>
-        <table className="table">
-          <thead>
-            <tr><th>Plan</th><th>Price</th><th>Entitlements</th><th>Limits</th><th>Members</th><th /></tr>
-          </thead>
-          <tbody>
-            {plans.map((p) => (
-              <tr key={p.slug}>
-                <td>
-                  <div className="who-text">
-                    <span>{p.name}{p.is_default && <span className="chip small">default</span>}</span>
-                    <span className="who-email mono">{p.slug}</span>
-                  </div>
-                </td>
-                <td>{p.price_inr ? `₹${p.price_inr.toLocaleString("en-IN")}/${p.interval}` : "Free"}</td>
-                <td>
-                  <div className="chips">
-                    {p.entitlements.map((e) => <span key={e} className="chip small">{e}</span>)}
-                    {!p.entitlements.length && <span className="muted">—</span>}
-                  </div>
-                </td>
-                <td className="mono small-text">
+        <DataTable
+          id={`plans-${slug}`}
+          rows={shape.rows}
+          getKey={(p) => p.slug}
+          initialSort="members"
+          exportName={`hynt-${slug}-plans`}
+          searchPlaceholder="Search plans or entitlements"
+          facets={[{ key: "interval", label: "Interval", of: (p) => p.interval }]}
+          columns={[
+            {
+              key: "plan", header: "Plan", value: (p) => `${p.name} ${p.slug}`,
+              render: (p) => (
+                <div className="who-text">
+                  <span>{p.name}{p.is_default && <span className="chip small">default</span>}</span>
+                  <span className="who-email mono">{p.slug}</span>
+                </div>
+              ),
+            },
+            {
+              key: "price", header: "Price", value: (p) => p.price_inr, align: "right",
+              render: (p) => (p.price_inr ? `₹${p.price_inr.toLocaleString("en-IN")}/${p.interval}` : "Free"),
+            },
+            { key: "members", header: "Members", value: (p) => p.count, align: "right" },
+            {
+              key: "monthly", header: "₹ / month", value: (p) => p.monthly, align: "right",
+              render: (p) => fmtInr(p.monthly),
+            },
+            {
+              key: "ent", header: "Entitlements", value: (p) => p.entitlements.join(" "),
+              render: (p) => (
+                <div className="chips">
+                  {p.entitlements.map((e) => <span key={e} className="chip small">{e}</span>)}
+                  {!p.entitlements.length && <span className="muted">—</span>}
+                </div>
+              ),
+            },
+            {
+              key: "limits", header: "Limits",
+              value: (p) => JSON.stringify(p.limits ?? {}),
+              render: (p) => (
+                <span className="mono small-text">
                   {Object.keys(p.limits ?? {}).length
                     ? Object.entries(p.limits).map(([k, v]) => `${k}: ${String(v)}`).join("\n")
                     : "—"}
-                </td>
-                <td className="muted">{members.filter((m) => m.plan === p.slug).length}</td>
-                <td className="right">
-                  <button className="btn small ghost" onClick={() => setDraft({
-                    slug: p.slug, name: p.name, price_inr: p.price_inr, interval: p.interval,
-                    entitlements: p.entitlements ?? [],
-                    limitsText: JSON.stringify(p.limits ?? {}, null, 2),
-                    is_default: p.is_default, isNew: false,
-                  })}>Edit</button>
-                </td>
-              </tr>
-            ))}
-            {!plans.length && <tr><td colSpan={6} className="muted">No plans on this platform yet.</td></tr>}
-          </tbody>
-        </table>
+                </span>
+              ),
+            },
+            {
+              key: "edit", header: "", align: "right",
+              render: (p) => (
+                <button className="btn small ghost" onClick={() => setDraft({
+                  slug: p.slug, name: p.name, price_inr: p.price_inr, interval: p.interval,
+                  entitlements: p.entitlements ?? [],
+                  limitsText: JSON.stringify(p.limits ?? {}, null, 2),
+                  is_default: p.is_default, isNew: false,
+                })}>Edit</button>
+              ),
+            },
+          ]}
+        />
       </div>
 
       <Drawer

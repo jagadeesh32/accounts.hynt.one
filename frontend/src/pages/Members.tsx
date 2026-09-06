@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
+import { BarList, ChartCard, SERIES, StackedBar, StatTile, foldToSlots } from "../charts";
 import { NoteBanner, useNote } from "../lib/useNote";
+import { relTime } from "../ui";
+import { DataTable } from "../widgets/DataTable";
 
 interface Member {
   user_id: string; email: string; full_name: string; status: string;
@@ -18,7 +21,6 @@ export function MembersPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [plans, setPlans] = useState<PlanRow[]>([]);
-  const [q, setQ] = useState("");
   const { note, setNote, act } = useNote();
 
   const [invite, setInvite] = useState({ email: "", role: "user", plan: "" });
@@ -31,18 +33,35 @@ export function MembersPage() {
   const load = useCallback(async () => {
     if (!slug) return;
     const [m, r, p] = await Promise.all([
-      api.get<{ members: Member[] }>(`/api/v1/admin/${slug}/members?q=${encodeURIComponent(q)}`),
+      api.get<{ members: Member[] }>(`/api/v1/admin/${slug}/members?limit=500`),
       api.get<{ roles: RoleRow[] }>(`/api/v1/admin/${slug}/roles`),
       api.get<{ plans: PlanRow[] }>(`/api/v1/admin/${slug}/plans`),
     ]);
     setMembers(m.members);
     setRoles(r.roles);
     setPlans(p.plans);
-  }, [slug, q]);
+  }, [slug]);
 
   useEffect(() => { void load(); }, [load]);
 
   const grantable = roles.filter((r) => r.grantable);
+
+  const shape = useMemo(() => {
+    const month = Date.now() - 30 * 86400e3;
+    const roleMix = new Map<string, number>();
+    const planMix = new Map<string, number>();
+    for (const m of members) {
+      roleMix.set(m.role, (roleMix.get(m.role) ?? 0) + 1);
+      planMix.set(m.plan ?? "none", (planMix.get(m.plan ?? "none") ?? 0) + 1);
+    }
+    return {
+      roleMix: [...roleMix.entries()].sort((a, b) => b[1] - a[1]),
+      planMix: [...planMix.entries()].map(([plan, count]) => ({ plan, count })),
+      active: members.filter((m) => m.last_login_at && new Date(m.last_login_at).getTime() >= month).length,
+      never: members.filter((m) => !m.last_login_at).length,
+      suspended: members.filter((m) => m.status !== "active").length,
+    };
+  }, [members]);
 
   return (
     <section className="page">
@@ -116,70 +135,116 @@ export function MembersPage() {
         </div>
       </div>
 
+      <div className="kpi-row">
+        <StatTile label="Members" value={members.length} hint={`on ${slug}`} />
+        <StatTile
+          label="Active this month" value={shape.active}
+          hint={members.length ? `${Math.round((shape.active / members.length) * 100)}% of members` : "none yet"}
+        />
+        <StatTile label="Never signed in" value={shape.never} hint="granted, unused" />
+        <StatTile
+          label="Suspended" value={shape.suspended} upIsGood={false}
+          tone={shape.suspended ? "warning" : undefined} hint="account-level, estate-wide"
+        />
+      </div>
+
+      <div className="viz-grid two">
+        <ChartCard
+          title="Roles"
+          subtitle="Who holds what here."
+          table={{ columns: ["Role", "Members"], rows: shape.roleMix.map(([r, c]) => [r, c]) }}
+        >
+          <BarList rows={shape.roleMix.map(([label, value]) => ({ label, value }))} />
+        </ChartCard>
+
+        <ChartCard
+          title="Plan mix"
+          subtitle="Members per plan, including those holding a role with no subscription."
+          table={{ columns: ["Plan", "Members"], rows: shape.planMix.map((p) => [p.plan, p.count]) }}
+          right={<Link className="btn small ghost" to={`/admin/${slug}/analytics`}>Analytics</Link>}
+        >
+          <StackedBar parts={foldToSlots(shape.planMix, (p) => p.count, (p) => p.plan)} />
+        </ChartCard>
+      </div>
+
       <div className="card">
         <div className="card-head">
-          <h2>{members.length} member{members.length === 1 ? "" : "s"}</h2>
-          <input className="search" placeholder="Search name or email" value={q}
-                 onChange={(e) => setQ(e.target.value)} />
+          <h2>Members</h2>
+          <p className="muted small-text">Role and plan changes take effect on the member's next token — within 15 minutes.</p>
         </div>
-        <table className="table">
-          <thead>
-            <tr><th>Person</th><th>Role</th><th>Plan</th><th>Last seen</th><th /></tr>
-          </thead>
-          <tbody>
-            {members.map((m) => (
-              <tr key={m.user_id} className={m.status === "active" ? "" : "dim"}>
-                <td>
-                  <div className="who-text">
-                    <span>{m.full_name || m.email}</span>
-                    <span className="who-email">{m.email}</span>
-                  </div>
-                </td>
-                <td>
-                  <select
-                    value={m.role}
-                    onChange={(e) => void act(
-                      () => api.patch(`/api/v1/admin/${slug}/members/${m.user_id}/role`, { role: e.target.value }),
-                      `${m.email} is now ${e.target.value}.`, load,
-                    )}
-                  >
-                    {roles.map((r) => (
-                      <option key={r.slug} value={r.slug} disabled={!r.grantable && r.slug !== m.role}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td>
-                  <select
-                    value={m.plan ?? ""}
-                    onChange={(e) => void act(
-                      () => api.post(`/api/v1/admin/${slug}/subscriptions`, {
-                        email: m.email, platform: slug, plan: e.target.value, status: "active",
-                      }),
-                      `${m.email} moved to ${e.target.value}.`, load,
-                    )}
-                  >
-                    {plans.map((p) => <option key={p.slug} value={p.slug}>{p.name}</option>)}
-                  </select>
-                </td>
-                <td className="muted">{m.last_login_at ? new Date(m.last_login_at).toLocaleDateString() : "never"}</td>
-                <td className="right">
-                  <button className="btn small danger" onClick={() => {
-                    if (!window.confirm(`Remove ${m.email} from ${slug}? Their account stays, they just lose access here.`)) return;
-                    void act(
-                      () => api.del(`/api/v1/admin/${slug}/members/${m.user_id}`),
-                      `${m.email} removed from ${slug}.`, load,
-                    );
-                  }}>Remove</button>
-                </td>
-              </tr>
-            ))}
-            {!members.length && (
-              <tr><td colSpan={5} className="muted">No members{q ? " match that search" : " yet"}.</td></tr>
-            )}
-          </tbody>
-        </table>
+        <DataTable
+          id={`members-${slug}`}
+          rows={members}
+          getKey={(m) => m.user_id}
+          initialSort="rank"
+          exportName={`hynt-${slug}-members`}
+          searchPlaceholder="Search name or email"
+          note={members.length >= 500 ? "the server returned the first 500 members" : undefined}
+          facets={[
+            { key: "role", label: "Role", of: (m) => m.role },
+            { key: "plan", label: "Plan", of: (m) => m.plan ?? "none" },
+            { key: "status", label: "Status", of: (m) => m.status },
+          ]}
+          columns={[
+            {
+              key: "person", header: "Person", value: (m) => `${m.full_name} ${m.email}`.trim(),
+              render: (m) => (
+                <div className={`who-text ${m.status === "active" ? "" : "dim"}`}>
+                  <span>{m.full_name || m.email}</span>
+                  <span className="who-email">{m.email}</span>
+                </div>
+              ),
+            },
+            {
+              key: "rank", header: "Role", value: (m) => m.rank,
+              render: (m) => (
+                <select
+                  value={m.role}
+                  onChange={(e) => void act(
+                    () => api.patch(`/api/v1/admin/${slug}/members/${m.user_id}/role`, { role: e.target.value }),
+                    `${m.email} is now ${e.target.value}.`, load,
+                  )}
+                >
+                  {roles.map((r) => (
+                    <option key={r.slug} value={r.slug} disabled={!r.grantable && r.slug !== m.role}>{r.name}</option>
+                  ))}
+                </select>
+              ),
+            },
+            {
+              key: "plan", header: "Plan", value: (m) => m.plan ?? "",
+              render: (m) => (
+                <select
+                  value={m.plan ?? ""}
+                  onChange={(e) => void act(
+                    () => api.post(`/api/v1/admin/${slug}/subscriptions`, {
+                      email: m.email, platform: slug, plan: e.target.value, status: "active",
+                    }),
+                    `${m.email} moved to ${e.target.value}.`, load,
+                  )}
+                >
+                  {plans.map((p) => <option key={p.slug} value={p.slug}>{p.name}</option>)}
+                </select>
+              ),
+            },
+            {
+              key: "seen", header: "Last seen", align: "right", value: (m) => m.last_login_at ?? "",
+              render: (m) => <span className="muted">{relTime(m.last_login_at)}</span>,
+            },
+            {
+              key: "remove", header: "", align: "right",
+              render: (m) => (
+                <button className="btn small danger" onClick={() => {
+                  if (!window.confirm(`Remove ${m.email} from ${slug}? Their account stays, they just lose access here.`)) return;
+                  void act(
+                    () => api.del(`/api/v1/admin/${slug}/members/${m.user_id}`),
+                    `${m.email} removed from ${slug}.`, load,
+                  );
+                }}>Remove</button>
+              ),
+            },
+          ]}
+        />
       </div>
     </section>
   );

@@ -7,7 +7,7 @@
  * Accounts, Clients and Audit does not refetch it five times.
  */
 import { useEffect, useState } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import { api } from "../../api";
 
 interface Stats {
@@ -17,6 +17,9 @@ interface Stats {
 
 export function EstateLayout() {
   const [stats, setStats] = useState<Stats | null>(null);
+  // Analytics opens with its own KPI row over a chosen window; the strip would
+  // restate five of those six numbers, one line above them and without a window.
+  const onAnalytics = useLocation().pathname.startsWith("/estate/analytics");
 
   useEffect(() => {
     void api.get<Stats>("/api/v1/superadmin/stats").then(setStats).catch(() => setStats(null));
@@ -24,7 +27,7 @@ export function EstateLayout() {
 
   return (
     <>
-      {stats && (
+      {stats && !onAnalytics && (
         <div className="page">
           <div className="stats">
             <Stat label="Accounts" value={stats.users} />
