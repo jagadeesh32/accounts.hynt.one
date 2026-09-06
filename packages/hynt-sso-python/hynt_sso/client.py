@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 import jwt
-from jwt import PyJWKClient
+from jwt import PyJWK
 
 
 class TokenError(Exception):
@@ -76,12 +76,60 @@ class Principal:
         )
 
 
+class _Jwks:
+    """Cached public keys.
+
+    PyJWT's own PyJWKClient fetches with urllib, whose default user-agent
+    Cloudflare answers with 403 in front of accounts.hynt.one — the symptom is
+    every token being rejected for "Fail to fetch data from the url". httpx is
+    used instead (it gets through, and it is already a dependency here).
+
+    A miss on an unknown `kid` refetches once, ignoring the TTL: that is what
+    makes a key rotation take effect immediately rather than an hour later.
+    """
+
+    def __init__(self, url: str, ttl: int, timeout: float, headers: dict[str, str]):
+        self._url = url
+        self._ttl = ttl
+        self._timeout = timeout
+        self._headers = headers
+        self._lock = threading.Lock()
+        self._keys: dict[str, Any] = {}
+        self._fetched_at = 0.0
+
+    def _fetch(self) -> None:
+        data = httpx.get(self._url, timeout=self._timeout, headers=self._headers).raise_for_status().json()
+        keys = {}
+        for entry in data.get("keys", []):
+            try:
+                keys[entry["kid"]] = PyJWK(entry).key
+            except Exception:
+                continue  # one unusable key must not break the rest
+        if keys:
+            self._keys = keys
+            self._fetched_at = time.monotonic()
+
+    def key_for(self, kid: str) -> Any:
+        with self._lock:
+            stale = time.monotonic() - self._fetched_at > self._ttl
+            if not self._keys or stale:
+                self._fetch()
+            if kid not in self._keys:
+                # Unknown kid: the provider may have just rotated.
+                self._fetch()
+            key = self._keys.get(kid)
+        if key is None:
+            raise TokenError(f"unknown signing key {kid}")
+        return key
+
+
 class _Revocations:
     """Polled cache of the published revocation list."""
 
-    def __init__(self, url: str, timeout: float = 3.0):
+    def __init__(self, url: str, timeout: float = 3.0, headers: dict[str, str] | None = None):
         self._url = url
         self._timeout = timeout
+        self._headers = headers or {}
         self._lock = threading.Lock()
         self._users: set[str] = set()
         self._sessions: set[str] = set()
@@ -96,7 +144,7 @@ class _Revocations:
             if now - self._fetched_at < self._interval:
                 return
             try:
-                data = httpx.get(self._url, timeout=self._timeout).json()
+                data = httpx.get(self._url, timeout=self._timeout, headers=self._headers).json()
             except Exception:
                 # Fail *open* on a fetch error, and retry soon. The alternative —
                 # refusing every token because the IdP blinked — turns a brief
@@ -124,13 +172,23 @@ class HyntSSO:
         check_revocations: bool = True,
         leeway: int = 30,
         timeout: float = 3.0,
+        origin: str | None = None,
     ):
+        """`origin` overrides where the JWKS and revocation list are *fetched*
+        from, without changing the `iss` this validates against.
+
+        On a box that also runs accounts.hynt.one, pass
+        ``origin="http://127.0.0.1:8103"``: server-to-server calls then skip
+        the CDN entirely — no egress, no edge rules, and nothing to go wrong at
+        3am because a WAF rule changed."""
         self.issuer = issuer.rstrip("/")
         self.audience = audience
         self.leeway = leeway
-        self._jwks = PyJWKClient(f"{self.issuer}/.well-known/jwks.json", cache_keys=True, lifespan=jwks_ttl)
+        base = (origin or self.issuer).rstrip("/")
+        headers = {"User-Agent": f"hynt-sso/1.0 (+{self.issuer})"}
+        self._jwks = _Jwks(f"{base}/.well-known/jwks.json", jwks_ttl, timeout, headers)
         self._revocations = (
-            _Revocations(f"{self.issuer}/api/v1/revocations", timeout) if check_revocations else None
+            _Revocations(f"{base}/api/v1/revocations", timeout, headers) if check_revocations else None
         )
 
     def verify(self, token: str) -> dict[str, Any]:
@@ -138,10 +196,11 @@ class HyntSSO:
         if not token:
             raise TokenError("no token")
         try:
-            signing_key = self._jwks.get_signing_key_from_jwt(token)
+            kid = jwt.get_unverified_header(token).get("kid", "")
+            signing_key = self._jwks.key_for(kid)
             claims = jwt.decode(
                 token,
-                signing_key.key,
+                signing_key,
                 algorithms=["RS256"],
                 # audience is the whole point: a token minted for another
                 # platform must not verify here, however valid its signature.

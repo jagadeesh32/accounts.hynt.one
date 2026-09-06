@@ -16,9 +16,15 @@ export interface HyntUser {
   rank: number;
   permissions: string[];
   plan: string | null;
-  plan_status: string | null;
+  /** camelCase on this side of the wire; the token endpoint sends plan_status. */
+  planStatus: string | null;
   entitlements: string[];
   limits: Record<string, unknown>;
+}
+
+/** Exactly what /oauth/token returns, before it is normalised for the app. */
+interface WireUser extends Omit<HyntUser, "planStatus"> {
+  plan_status: string | null;
 }
 
 export interface HyntSsoOptions {
@@ -35,7 +41,7 @@ export interface HyntSsoOptions {
 interface TokenResponse {
   access_token: string;
   expires_in: number;
-  user: HyntUser;
+  user: WireUser;
 }
 
 const PENDING = "hynt_sso_pending";
@@ -297,8 +303,9 @@ export class HyntSso {
       throw new Error(this.describe(detail.detail ?? "invalid_grant"));
     }
     const data = (await response.json()) as TokenResponse;
+    const { plan_status, ...rest } = data.user;
     this.accessToken = data.access_token;
-    this.currentUser = data.user;
+    this.currentUser = { ...rest, planStatus: plan_status };
     this.expiresAt = Date.now() + data.expires_in * 1000;
     this.scheduleRenewal(data.expires_in);
   }

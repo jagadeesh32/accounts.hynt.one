@@ -17,6 +17,9 @@ valid pbkdf2/scrypt/argon2 string, so every verifier refuses it, and it reads
 unambiguously in a dump as "this account authenticates elsewhere" instead of
 looking like corruption.
 """
+import os
+import re
+import pathlib
 import sqlite3
 import subprocess
 import sys
@@ -39,10 +42,33 @@ def strip_terminal(dry: bool) -> None:
     print("  -> hashes and reset tokens cleared")
 
 
+def xterminal_db_path() -> str:
+    """Resolve the SQLite file X-Terminal actually opens.
+
+    Not the copy sitting in the checkout: XT_STATE_DIR in its .env points the
+    live database somewhere else entirely (/opt/x_terminal/backend/var), and the
+    file in the repo tree is a stale leftover. Writing to the wrong one succeeds
+    silently and changes nothing that runs.
+    """
+    env = pathlib.Path("/opt/xterminal.hynt.one/backend/.env")
+    state_dir = ""
+    if env.exists():
+        for line in env.read_text().splitlines():
+            match = re.match(r"\s*XT_SQLITE_PATH\s*=\s*(\S+)", line)
+            if match:
+                return match.group(1)
+            match = re.match(r"\s*XT_STATE_DIR\s*=\s*(\S+)", line)
+            if match:
+                state_dir = match.group(1)
+    if state_dir:
+        return os.path.join(state_dir, "x_terminal.db")
+    return "/opt/xterminal.hynt.one/backend/var/x_terminal.db"
+
+
 def strip_xterminal(dry: bool, path: str) -> None:
     conn = sqlite3.connect(path)
     n = conn.execute("select count(*) from users where password_hash <> ?", (SENTINEL,)).fetchone()[0]
-    print(f"xterminal (sqlite users): {n} row(s) with a local password")
+    print(f"xterminal (sqlite {path}): {n} row(s) with a local password")
     if dry:
         conn.close()
         return
@@ -68,7 +94,7 @@ if __name__ == "__main__":
     dry = "--dry-run" in sys.argv
     print("DRY RUN — nothing will be written.\n" if dry else "")
     strip_terminal(dry)
-    strip_xterminal(dry, "/opt/xterminal.hynt.one/backend/var/x_terminal.db")
+    strip_xterminal(dry, xterminal_db_path())
     strip_intelligence(dry)
     if not dry:
         print("\nLocal password login is now impossible in all three. "
