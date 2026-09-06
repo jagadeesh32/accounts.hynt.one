@@ -7,8 +7,14 @@ signed in; sign out once and you are signed out everywhere. Roles, permissions
 and pricing plans are held here, per platform, and travel to each platform
 inside the access token.
 
-Built on **Cello** (the Rust-powered Python framework), **PostgreSQL** via
-SQLAlchemy + Alembic, and **React + Vite + TypeScript**.
+Built on **FastAPI + Uvicorn**, **PostgreSQL** via SQLAlchemy + Alembic, and
+**React + Vite + TypeScript**.
+
+> This service was specified against "Cello", a Rust-powered Python framework.
+> No such distribution is published, so the HTTP layer is FastAPI — the stack
+> the rest of the estate already runs under systemd. The one design constraint
+> Cello imposed is kept deliberately (see "The cookie" below), because it is a
+> good constraint independent of the framework.
 
 ---
 
@@ -49,9 +55,11 @@ session table cannot be replayed as a login.
 It is deliberately *not* a JWT: this is the thing that has to be revocable the
 instant an account is suspended, and a row is revocable by definition.
 
-> Cello stores response headers in a `HashMap`, so a response carries exactly one
-> `Set-Cookie`. The design uses a single cookie for that reason, with access
-> tokens returned in the body instead of the usual access+refresh cookie pair.
+> The original Cello design could emit exactly one `Set-Cookie` per response,
+> so this service uses a single cookie and returns access tokens in the body
+> rather than the usual access+refresh cookie pair. That is now a choice rather
+> than a limit, and it is kept: one cookie is one thing to revoke, and a refresh
+> token that never reaches the browser cannot be stolen from it.
 
 ### Tokens
 
@@ -117,7 +125,7 @@ Terminal" would really mean "superadmin, eventually".
 ## Running locally
 
 ```bash
-./scripts/dev.sh all      # everything, on fixed ports
+./scripts/dev.sh          # backend on :9000, frontend on :5170
 ```
 
 Then http://localhost:5170. Full walkthrough, including the localhost cookie
@@ -151,6 +159,8 @@ python -m scripts.manage bootstrap                                   # seed / re
 python -m scripts.manage create-user --email a@b.c --platform terminal --role admin
 python -m scripts.manage grant --email a@b.c --platform xterminal --role staff
 python -m scripts.manage passwd --email a@b.c                        # also ends every session
+python -m scripts.manage superadmin --email a@b.c                    # estate-wide flag
+python -m scripts.manage list-users
 python -m scripts.manage list-clients
 python -m scripts.manage rotate-key                                  # old public key stays published
 python -m scripts.manage jwks
@@ -168,9 +178,9 @@ the next run.
 cd backend && .venv/bin/python -m pytest
 ```
 
-52 tests, run against a real server on a throwaway database — Cello's HTTP
-engine, routing and JSON are all Rust, so anything bypassing the server would be
-testing a different code path from the one that serves traffic.
+28 tests, run against a real server on a throwaway database. Nothing bypasses
+the HTTP layer: the cookie handling and the redirect behaviour are where the
+risk in this service lives, and only a real request exercises them.
 
 ---
 
@@ -193,3 +203,20 @@ packages/
 deploy/          nginx
 docs/            RUNNING_LOCALLY.md · INTEGRATION.md · DEPLOYMENT.md
 ```
+
+
+---
+
+## Deployed
+
+`accounts.hynt.one` runs on this box as `accounts-hynt.service` (Uvicorn,
+`127.0.0.1:8103`) behind nginx, with the SPA built to `/var/www/accounts`.
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+Identity was consolidated here on 2026-09-06: the accounts that lived in
+terminal's MariaDB, X-Terminal's SQLite and Intelligence's PostgreSQL were
+imported (`backend/scripts/import_legacy.py`) and their local password hashes
+retired (`backend/scripts/strip_legacy_credentials.py`). Those tables keep their
+row id and email — real data references the id, and the email is how the SSO
+layer finds the existing row on first sign-in — but they no longer hold a
+credential. Pre-change dumps are in `var/legacy-backup/`.

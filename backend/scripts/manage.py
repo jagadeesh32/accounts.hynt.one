@@ -1,490 +1,387 @@
-"""Operational CLI for accounts.hynt.one.
+"""Operator CLI. `python -m scripts.manage <command>` from backend/.
 
-    python -m scripts.manage bootstrap          # platforms, roles, plans, clients, superadmin
-    python -m scripts.manage create-user  --email a@b.c --role admin --platform terminal
-    python -m scripts.manage grant        --email a@b.c --platform terminal --role staff
-    python -m scripts.manage passwd       --email a@b.c
-    python -m scripts.manage list-clients
-    python -m scripts.manage rotate-key
+bootstrap is idempotent by design: the role, permission and plan definitions
+below are the source of truth, so tightening a role here and re-running is the
+supported way to change it.
 """
-
-from __future__ import annotations
-
 import argparse
+import asyncio
 import getpass
 import json
+import secrets
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from sqlalchemy import select
 
-from sqlalchemy import select  # noqa: E402
+from app.core.keys import get_active_key, jwks as build_jwks, rotate_key
+from app.core.security import hash_password, password_problem
+from app.core.sessions import revoke_all_sessions
+from app.db import SessionLocal
+from app.models.billing import Plan
+from app.models.identity import User
+from app.models.oauth import OAuthClient
+from app.models.rbac import Platform, Role
+from app.services import provisioning, revocation
 
-from app import config  # noqa: E402
-from app.core import keys  # noqa: E402
-from app.core.security import hash_password, new_secret  # noqa: E402
-from app.db import session_scope  # noqa: E402
-from app.models import (  # noqa: E402
-    Membership,
-    OAuthClient,
-    Permission,
-    Plan,
-    Platform,
-    Role,
-    RolePermission,
-    User,
-    UserStatus,
-)
-from app.services import provisioning  # noqa: E402
+# --------------------------------------------------------------------------
+# The estate, as seeded. Editing these and re-running `bootstrap` re-applies.
+# --------------------------------------------------------------------------
 
-# --------------------------------------------------------------------------- #
-#  Seed definitions
-# --------------------------------------------------------------------------- #
-# The three existing platforms. Redirect URIs list both the production origin and
-# the Vite dev server, because a developer who has to edit the database to run
-# the app locally will eventually edit production instead.
 PLATFORMS = [
     {
         "slug": "terminal",
         "name": "Hynt Terminal",
-        "description": "Equity screening, scanners and the trading desk.",
         "base_url": "https://terminal.hynt.one",
-        "icon": "terminal",
-        "sort_order": 10,
-        "origins": ["https://terminal.hynt.one", "http://localhost:5174"],
-        "permissions": [
-            ("terminal:scanner.run", "Run scanners and screeners"),
-            ("terminal:scanner.configure", "Change scanner parameters and presets"),
-            ("terminal:positions.read", "View positions and P&L"),
-            ("terminal:positions.write", "Sync and edit positions"),
-            ("terminal:broker.manage", "Connect and control broker sessions"),
-            ("terminal:users.manage", "Manage terminal users and roles"),
-            ("terminal:mcp.keys", "Issue and revoke MCP API keys"),
-        ],
-        "roles": {
-            "admin": ["terminal:scanner.run", "terminal:scanner.configure",
-                      "terminal:positions.read", "terminal:positions.write",
-                      "terminal:broker.manage", "terminal:users.manage", "terminal:mcp.keys"],
-            "staff": ["terminal:scanner.run", "terminal:scanner.configure",
-                      "terminal:positions.read", "terminal:positions.write"],
-            "user": ["terminal:scanner.run", "terminal:positions.read"],
-        },
-        "plans": [
-            {"code": "free", "name": "Free", "price_cents": 0, "is_default": True,
-             "sort_order": 10,
-             "description": "Daily scans on a delayed feed.",
-             "features": ["End-of-day scans", "3 saved screeners", "Community support"],
-             "limits": {"scans_per_day": 25, "saved_screeners": 3, "history_days": 90},
-             "entitlements": []},
-            {"code": "pro", "name": "Pro", "price_cents": 199000, "sort_order": 20,
-             "trial_days": 14,
-             "description": "Intraday scanning and the full screener suite.",
-             "features": ["Intraday scans", "Unlimited screeners", "SMC + Lorentz engines",
-                          "Position sync", "Email support"],
-             "limits": {"scans_per_day": 1000, "saved_screeners": 100, "history_days": 1825},
-             "entitlements": ["terminal.intraday", "terminal.smc", "terminal.lorentz",
-                              "terminal.position_sync"]},
-            {"code": "desk", "name": "Desk", "price_cents": 599000, "sort_order": 30,
-             "description": "Multi-seat desk with broker automation and MCP access.",
-             "features": ["Everything in Pro", "Broker automation", "MCP API keys",
-                          "Priority support"],
-             "limits": {"scans_per_day": 10000, "saved_screeners": 1000, "history_days": 3650},
-             "entitlements": ["terminal.intraday", "terminal.smc", "terminal.lorentz",
-                              "terminal.position_sync", "terminal.broker_automation",
-                              "terminal.mcp"]},
-        ],
+        "description": "Live market terminal — scanners, brokers, charting.",
+        "icon": "📈",
     },
     {
         "slug": "xterminal",
         "name": "Hynt X-Terminal",
-        "description": "Index derivatives desk — option chain, OI velocity and alerts.",
         "base_url": "https://xterminal.hynt.one",
-        "icon": "activity",
-        "sort_order": 20,
-        "origins": ["https://xterminal.hynt.one", "http://localhost:5175"],
-        "permissions": [
-            ("xterminal:board.read", "View option boards and the live feed"),
-            ("xterminal:alerts.manage", "Create and edit alerts"),
-            ("xterminal:feed.control", "Start and stop the broker feed"),
-            ("xterminal:users.manage", "Manage x-terminal users and roles"),
-        ],
-        "roles": {
-            "admin": ["xterminal:board.read", "xterminal:alerts.manage",
-                      "xterminal:feed.control", "xterminal:users.manage"],
-            "staff": ["xterminal:board.read", "xterminal:alerts.manage"],
-            "user": ["xterminal:board.read"],
-        },
-        "plans": [
-            {"code": "free", "name": "Free", "price_cents": 0, "is_default": True,
-             "sort_order": 10,
-             "description": "Delayed option chain, one index.",
-             "features": ["Delayed chain", "1 index", "5 alerts"],
-             "limits": {"indices": 1, "alerts": 5, "refresh_seconds": 60},
-             "entitlements": []},
-            {"code": "pro", "name": "Pro", "price_cents": 299000, "sort_order": 20,
-             "trial_days": 7,
-             "description": "Live feed across every index, with OI velocity.",
-             "features": ["Live tick feed", "All indices", "OI velocity", "Unlimited alerts"],
-             "limits": {"indices": 10, "alerts": 500, "refresh_seconds": 1},
-             "entitlements": ["xterminal.live_feed", "xterminal.oi_velocity",
-                              "xterminal.all_indices"]},
-        ],
+        "description": "The execution desk.",
+        "icon": "⚡",
     },
     {
         "slug": "intelligence",
         "name": "Hynt Intelligence",
-        "description": "Market intelligence — documents, entities and analytics.",
         "base_url": "https://intelligence.hynt.one",
-        "icon": "brain",
-        "sort_order": 30,
-        "origins": ["https://intelligence.hynt.one", "http://localhost:5176"],
-        "permissions": [
-            ("intelligence:documents.read", "Read ingested documents"),
-            ("intelligence:documents.write", "Upload and edit documents"),
-            ("intelligence:connectors.manage", "Configure and backfill connectors"),
-            ("intelligence:entities.merge", "Merge and remap entities"),
-            ("intelligence:analytics.read", "View analytics dashboards"),
-            ("intelligence:users.manage", "Manage intelligence users and roles"),
-        ],
-        "roles": {
-            "admin": ["intelligence:documents.read", "intelligence:documents.write",
-                      "intelligence:connectors.manage", "intelligence:entities.merge",
-                      "intelligence:analytics.read", "intelligence:users.manage"],
-            "staff": ["intelligence:documents.read", "intelligence:documents.write",
-                      "intelligence:analytics.read"],
-            "user": ["intelligence:documents.read", "intelligence:analytics.read"],
-        },
-        "plans": [
-            {"code": "free", "name": "Free", "price_cents": 0, "is_default": True,
-             "sort_order": 10,
-             "description": "Read-only access to the shared corpus.",
-             "features": ["Read documents", "Basic analytics", "100 queries a day"],
-             "limits": {"queries_per_day": 100, "documents": 500, "connectors": 0},
-             "entitlements": []},
-            {"code": "team", "name": "Team", "price_cents": 499000, "sort_order": 20,
-             "trial_days": 14,
-             "description": "Your own connectors, entity graph and LLM summarisation.",
-             "features": ["Private connectors", "Entity graph", "LLM summaries",
-                          "Unlimited queries"],
-             "limits": {"queries_per_day": 100000, "documents": 100000, "connectors": 25},
-             "entitlements": ["intelligence.connectors", "intelligence.entity_graph",
-                              "intelligence.llm"]},
-        ],
+        "description": "Market intelligence, documents and research.",
+        "icon": "🧠",
     },
 ]
 
+# Permissions are namespaced by platform so a token's `perms` list is
+# unambiguous even though a user may hold roles on several platforms.
+ROLES = {
+    "terminal": [
+        ("admin", "Administrator", 30, [
+            "terminal:scanner.run", "terminal:broker.manage", "terminal:positions.sync",
+            "terminal:alerts.manage", "terminal:members.manage", "terminal:billing.manage",
+        ]),
+        ("staff", "Staff", 20, [
+            "terminal:scanner.run", "terminal:broker.manage", "terminal:positions.sync",
+            "terminal:alerts.manage",
+        ]),
+        ("user", "Member", 10, ["terminal:scanner.run", "terminal:alerts.manage"]),
+    ],
+    "xterminal": [
+        ("admin", "Administrator", 30, [
+            "xterminal:orders.place", "xterminal:strategies.manage",
+            "xterminal:members.manage", "xterminal:billing.manage",
+        ]),
+        ("staff", "Staff", 20, ["xterminal:orders.place", "xterminal:strategies.manage"]),
+        ("user", "Member", 10, ["xterminal:orders.place"]),
+    ],
+    "intelligence": [
+        ("admin", "Administrator", 30, [
+            "intelligence:documents.manage", "intelligence:entities.manage",
+            "intelligence:members.manage", "intelligence:billing.manage",
+        ]),
+        ("staff", "Staff", 20, ["intelligence:documents.manage", "intelligence:entities.manage"]),
+        ("user", "Member", 10, ["intelligence:documents.read"]),
+    ],
+}
 
-def _seed_platform(db, spec: dict) -> Platform:
-    platform = db.scalar(select(Platform).where(Platform.slug == spec["slug"]))
-    if platform is None:
-        platform = Platform(slug=spec["slug"])
-        db.add(platform)
-    platform.name = spec["name"]
-    platform.description = spec["description"]
-    platform.base_url = spec["base_url"]
-    platform.icon = spec["icon"]
-    platform.sort_order = spec["sort_order"]
-    platform.active = True
-    db.flush()
+PLANS = {
+    "terminal": [
+        ("free", "Free", 0, ["terminal.eod"], {"scans_per_day": 25, "alerts": 5}, True),
+        ("pro", "Pro", 1499, ["terminal.eod", "terminal.intraday", "terminal.smc"],
+         {"scans_per_day": 1000, "alerts": 200}, False),
+    ],
+    "xterminal": [
+        ("free", "Free", 0, [], {"orders_per_day": 10}, True),
+        ("pro", "Pro", 2499, ["xterminal.algo", "xterminal.basket"], {"orders_per_day": 1000}, False),
+    ],
+    "intelligence": [
+        ("free", "Free", 0, ["intelligence.search"], {"queries_per_day": 50}, True),
+        ("pro", "Pro", 1999, ["intelligence.search", "intelligence.llm", "intelligence.export"],
+         {"queries_per_day": 2000}, False),
+    ],
+}
 
-    # Permissions
-    perms: dict[str, Permission] = {}
-    for code, description in spec["permissions"]:
-        perm = db.scalar(select(Permission).where(Permission.code == code))
-        if perm is None:
-            perm = Permission(code=code, description=description)
-            db.add(perm)
-            db.flush()
-        else:
-            perm.description = description
-        perms[code] = perm
-
-    # Roles, and the permission bundle behind each. Re-seeding is idempotent:
-    # role permissions are recomputed so tightening a role in this file actually
-    # takes effect on the next bootstrap.
-    for role_spec in provisioning.default_roles_for_platform(platform.id):
-        role = db.scalar(
-            select(Role).where(Role.platform_id == platform.id, Role.code == role_spec["code"])
-        )
-        if role is None:
-            role = Role(platform_id=platform.id, **role_spec)
-            db.add(role)
-            db.flush()
-        else:
-            role.name = role_spec["name"]
-            role.rank = role_spec["rank"]
-            role.is_default = role_spec["is_default"]
-            role.description = role_spec["description"]
-
-        wanted = set(spec["roles"].get(role.code, []))
-        current = {rp.permission.code: rp for rp in role.permissions}
-        for code in wanted - set(current):
-            db.add(RolePermission(role_id=role.id, permission_id=perms[code].id))
-        for code in set(current) - wanted:
-            db.delete(current[code])
-        db.flush()
-
-    # Plans
-    for plan_spec in spec["plans"]:
-        plan = db.scalar(
-            select(Plan).where(Plan.platform_id == platform.id, Plan.code == plan_spec["code"])
-        )
-        if plan is None:
-            plan = Plan(platform_id=platform.id, code=plan_spec["code"])
-            db.add(plan)
-        plan.name = plan_spec["name"]
-        plan.description = plan_spec.get("description", "")
-        plan.price_cents = plan_spec["price_cents"]
-        plan.currency = plan_spec.get("currency", "INR")
-        plan.interval = plan_spec.get("interval", "monthly")
-        plan.trial_days = plan_spec.get("trial_days", 0)
-        plan.features = plan_spec.get("features", [])
-        plan.limits = plan_spec.get("limits", {})
-        plan.entitlements = plan_spec.get("entitlements", [])
-        plan.is_default = plan_spec.get("is_default", False)
-        plan.sort_order = plan_spec.get("sort_order", 0)
-        plan.active = True
-        db.flush()
-
-    # The SPA's OAuth client. Public (no secret) — a secret shipped in a browser
-    # bundle is not a secret — so PKCE is what actually authenticates it.
-    client_id = f"{spec['slug']}-web"
-    client = db.scalar(select(OAuthClient).where(OAuthClient.client_id == client_id))
-    if client is None:
-        client = OAuthClient(client_id=client_id, platform_id=platform.id)
-        db.add(client)
-    client.name = f"{spec['name']} (web)"
-    client.platform_id = platform.id
-    client.is_public = True
-    client.client_secret_hash = None
-    client.redirect_uris = [f"{origin}/auth/callback" for origin in spec["origins"]]
-    client.post_logout_redirect_uris = [f"{origin}/" for origin in spec["origins"]]
-    client.scopes = ["openid", "profile", "email"]
-    client.trusted = True
-    client.active = True
-    db.flush()
-
-    return platform
+# One public SPA client per platform. Localhost URIs are registered so the dev
+# servers work against production accounts without a second client per box.
+CLIENTS = [
+    ("terminal-web", "Hynt Terminal (web)", "terminal", [
+        "https://terminal.hynt.one/auth/callback",
+        "http://localhost:5173/auth/callback",
+        "http://localhost:5170/auth/callback",
+    ]),
+    ("xterminal-web", "Hynt X-Terminal (web)", "xterminal", [
+        "https://xterminal.hynt.one/auth/callback",
+        "http://localhost:5174/auth/callback",
+    ]),
+    ("intelligence-web", "Hynt Intelligence (web)", "intelligence", [
+        "https://intelligence.hynt.one/auth/callback",
+        "http://localhost:5175/auth/callback",
+    ]),
+]
 
 
-def cmd_bootstrap(args) -> int:
-    """Seed platforms, roles, permissions, plans, clients — and the superadmin."""
-    from app import config
-
-    with session_scope() as db:
-        keys.ensure_key(db)
-
+async def cmd_bootstrap(args):
+    async with SessionLocal() as db:
         for spec in PLATFORMS:
-            platform = _seed_platform(db, spec)
-            print(f"  platform  {platform.slug:<14} roles+plans+client seeded")
+            platform = (await db.execute(select(Platform).where(Platform.slug == spec["slug"]))).scalars().first()
+            if platform is None:
+                platform = Platform(slug=spec["slug"])
+                db.add(platform)
+            platform.name = spec["name"]
+            platform.base_url = spec["base_url"]
+            platform.description = spec["description"]
+            platform.icon = spec["icon"]
+            platform.is_active = True
+        await db.commit()
 
-        email = (args.email or config.BOOTSTRAP_EMAIL).strip().lower()
-        user = db.scalar(select(User).where(User.email == email))
+        platforms = {p.slug: p for p in (await db.execute(select(Platform))).scalars()}
 
+        for slug, roles in ROLES.items():
+            platform = platforms[slug]
+            for role_slug, name, rank, perms in roles:
+                role = (
+                    await db.execute(select(Role).where(Role.platform_id == platform.id, Role.slug == role_slug))
+                ).scalars().first()
+                if role is None:
+                    role = Role(platform_id=platform.id, slug=role_slug)
+                    db.add(role)
+                role.name = name
+                role.rank = rank
+                role.permissions = perms
+        await db.commit()
+
+        for slug, plans in PLANS.items():
+            platform = platforms[slug]
+            for order, (plan_slug, name, price, ents, limits, is_default) in enumerate(plans):
+                plan = (
+                    await db.execute(select(Plan).where(Plan.platform_id == platform.id, Plan.slug == plan_slug))
+                ).scalars().first()
+                if plan is None:
+                    plan = Plan(platform_id=platform.id, slug=plan_slug)
+                    db.add(plan)
+                plan.name = name
+                plan.price_inr = price
+                plan.entitlements = ents
+                plan.limits = limits
+                plan.is_default = is_default
+                plan.sort_order = order
+        await db.commit()
+
+        for client_id, name, platform_slug, uris in CLIENTS:
+            client = (await db.execute(select(OAuthClient).where(OAuthClient.client_id == client_id))).scalars().first()
+            if client is None:
+                client = OAuthClient(client_id=client_id)
+                db.add(client)
+            client.name = name
+            client.platform_id = platforms[platform_slug].id
+            client.redirect_uris = uris
+            client.is_public = True
+            client.is_active = True
+        await db.commit()
+
+        key = await get_active_key(db)
+
+        email = (args.superadmin_email or "admin@hynt.one").strip().lower()
+        user = (await db.execute(select(User).where(User.email == email))).scalars().first()
+        password = None
         if user is None:
-            password = args.password or config.BOOTSTRAP_PASSWORD or new_secret(12)
-            generated = not (args.password or config.BOOTSTRAP_PASSWORD)
-            user = provisioning.create_user_account(
-                db, email=email, password=password, full_name=args.name or "Superadmin",
-                is_superadmin=True,
+            password = secrets.token_urlsafe(15)
+            user = User(
+                email=email, full_name="Hynt Superadmin",
+                password_hash=hash_password(password), is_superadmin=True,
             )
-            # Give the superadmin the top role on every platform explicitly, so
-            # the admin console reflects reality rather than relying on the
-            # is_superadmin bypass alone.
-            for spec in PLATFORMS:
-                platform = db.scalar(select(Platform).where(Platform.slug == spec["slug"]))
-                role = provisioning.role_for(db, platform, "admin")
-                provisioning.grant_membership(db, user, platform, role)
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+        elif not user.is_superadmin:
+            user.is_superadmin = True
+            await db.commit()
 
-            print(f"\n  superadmin {email}")
-            if generated:
-                print(f"  password   {password}")
-                print("  ^ shown once — change it after signing in.")
+        # The superadmin is a member of every platform on the top plan, or the
+        # launcher would show the person who runs the estate no tiles at all.
+        for platform in platforms.values():
+            await provisioning.grant(db, user_id=user.id, platform=platform, role_slug="admin", plan_slug="pro")
+
+        print(f"platforms   : {', '.join(sorted(platforms))}")
+        print(f"clients     : {', '.join(c[0] for c in CLIENTS)}")
+        print(f"signing kid : {key.kid}")
+        print(f"superadmin  : {email}")
+        if password:
+            print(f"password    : {password}")
+            print("              ^ shown once. Change it after first sign-in.")
         else:
-            if not user.is_superadmin:
-                user.is_superadmin = True
-                print(f"  superadmin {email} (promoted)")
-            else:
-                print(f"  superadmin {email} (already present)")
-
-    print("\nbootstrap complete")
-    return 0
+            print("password    : (unchanged — account already existed)")
 
 
-def cmd_create_user(args) -> int:
-    from datetime import datetime, timedelta, timezone
-
-    from app.core.security import token_digest
-    from app.models import PasswordReset
-
-    with session_scope() as db:
+async def cmd_create_user(args):
+    async with SessionLocal() as db:
         email = args.email.strip().lower()
-        if db.scalar(select(User).where(User.email == email)) is not None:
-            print(f"error: {email} already exists", file=sys.stderr)
-            return 1
-
-        # --invite creates the account with no usable password and issues a
-        # single-use activation link. That is the right way to onboard someone
-        # during the cutover: an administrator typing a password and sending it
-        # over chat is a worse secret than no secret at all.
-        if args.invite:
-            password = None
-        else:
-            password = args.password or getpass.getpass("password: ")
-
-        user = provisioning.create_user_account(
-            db, email=email, password=password, full_name=args.name or "",
-            is_superadmin=args.superadmin,
-        )
-
-        if args.invite:
-            raw = new_secret(32)
-            now = datetime.now(timezone.utc)
-            db.add(
-                PasswordReset(
-                    user_id=user.id,
-                    token_hash=token_digest(raw),
-                    # Longer than a self-service reset: an invitation may sit in
-                    # an inbox over a weekend before anyone opens it.
-                    expires_at=now + timedelta(days=7),
-                    created_at=now,
-                )
-            )
-            print(f"created {email} (pending activation)")
-            print(f"\n  activation link (valid 7 days, single use):")
-            print(f"  {config.ACCOUNT_APP_URL.rstrip('/')}/reset-password?token={raw}\n")
+        if (await db.execute(select(User).where(User.email == email))).scalars().first():
+            sys.exit(f"{email} already exists")
+        password = args.password or secrets.token_urlsafe(12)
+        problem = password_problem(password)
+        if problem:
+            sys.exit(problem)
+        user = User(email=email, full_name=args.name, password_hash=hash_password(password))
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
 
         if args.platform:
-            platform = db.scalar(select(Platform).where(Platform.slug == args.platform))
+            platform = (await db.execute(select(Platform).where(Platform.slug == args.platform))).scalars().first()
             if platform is None:
-                print(f"error: unknown platform {args.platform}", file=sys.stderr)
-                return 1
-            role = provisioning.role_for(db, platform, args.role or "user")
-            if role is None:
-                print(f"error: unknown role {args.role}", file=sys.stderr)
-                return 1
-            provisioning.grant_membership(db, user, platform, role)
-
-        if not args.invite:
-            print(f"created {email} ({'superadmin' if args.superadmin else 'user'})")
-    return 0
+                sys.exit(f"no platform '{args.platform}'")
+            await provisioning.grant(db, user_id=user.id, platform=platform, role_slug=args.role, plan_slug=args.plan)
+        print(f"created {email}")
+        if not args.password:
+            print(f"password: {password}")
 
 
-def cmd_grant(args) -> int:
-    with session_scope() as db:
-        user = db.scalar(select(User).where(User.email == args.email.strip().lower()))
+async def cmd_grant(args):
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.email == args.email.strip().lower()))).scalars().first()
         if user is None:
-            print(f"error: no user {args.email}", file=sys.stderr)
-            return 1
-        platform = db.scalar(select(Platform).where(Platform.slug == args.platform))
+            sys.exit("no such user")
+        platform = (await db.execute(select(Platform).where(Platform.slug == args.platform))).scalars().first()
         if platform is None:
-            print(f"error: unknown platform {args.platform}", file=sys.stderr)
-            return 1
-        role = provisioning.role_for(db, platform, args.role)
-        if role is None:
-            print(f"error: unknown role {args.role} on {args.platform}", file=sys.stderr)
-            return 1
-        provisioning.grant_membership(db, user, platform, role)
+            sys.exit("no such platform")
+        await provisioning.grant(db, user_id=user.id, platform=platform, role_slug=args.role, plan_slug=args.plan)
+        await revocation.revoke_user(db, user.id, reason="membership changed via CLI")
         print(f"{args.email} is now {args.role} on {args.platform}")
-    return 0
 
 
-def cmd_passwd(args) -> int:
-    with session_scope() as db:
-        user = db.scalar(select(User).where(User.email == args.email.strip().lower()))
+async def cmd_passwd(args):
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.email == args.email.strip().lower()))).scalars().first()
         if user is None:
-            print(f"error: no user {args.email}", file=sys.stderr)
-            return 1
-        password = args.password or getpass.getpass("new password: ")
-        if len(password) < 10:
-            print("error: password must be at least 10 characters", file=sys.stderr)
-            return 1
+            sys.exit("no such user")
+        password = args.password or getpass.getpass("New password: ")
+        problem = password_problem(password)
+        if problem:
+            sys.exit(problem)
         user.password_hash = hash_password(password)
-        # Every token and session minted under the old password stops working.
         user.token_version += 1
-        from app.core import sessions
-
-        revoked = sessions.revoke_all_for_user(db, user.id)
-
-        # An invited account is PENDING until it has a password. Setting one for
-        # it here is exactly the activation it was waiting for, so leaving it
-        # PENDING would mean the operator sets a password and the user still
-        # cannot sign in.
-        activated = False
-        if user.status == UserStatus.PENDING:
-            user.status = UserStatus.ACTIVE
-            activated = True
-
-        print(f"password updated for {args.email} ({revoked} session(s) ended)")
-        if activated:
-            print("account activated (was pending)")
-    return 0
+        await db.commit()
+        # Same rule as the console: a password change ends every session.
+        count = await revoke_all_sessions(db, user.id)
+        await revocation.revoke_user(db, user.id, reason="password changed via CLI")
+        print(f"password changed; {count} session(s) ended")
 
 
-def cmd_list_clients(args) -> int:
-    with session_scope() as db:
-        for client in db.scalars(select(OAuthClient).order_by(OAuthClient.client_id)):
-            print(f"{client.client_id:<20} {client.platform.slug:<14} "
-                  f"{'public' if client.is_public else 'confidential':<13} "
-                  f"{'active' if client.active else 'disabled'}")
-            for uri in client.redirect_uris:
-                print(f"    → {uri}")
-    return 0
+async def cmd_suspend(args):
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.email == args.email.strip().lower()))).scalars().first()
+        if user is None:
+            sys.exit("no such user")
+        user.status = "suspended" if not args.undo else "active"
+        user.token_version += 1
+        await db.commit()
+        if not args.undo:
+            await revoke_all_sessions(db, user.id)
+            await revocation.revoke_user(db, user.id, reason="suspended via CLI")
+        print(f"{user.email} is now {user.status}")
 
 
-def cmd_rotate_key(args) -> int:
-    with session_scope() as db:
-        key = keys.rotate(db)
-        print(f"new signing key {key.kid}")
-        print("previous public keys stay published until their tokens expire")
-    return 0
+async def cmd_superadmin(args):
+    """Grant or remove the estate-wide superadmin flag."""
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.email == args.email.strip().lower()))).scalars().first()
+        if user is None:
+            sys.exit("no such user")
+        if args.remove:
+            others = (
+                await db.execute(select(User).where(User.is_superadmin.is_(True), User.id != user.id))
+            ).scalars().all()
+            if not others:
+                # Removing the last one leaves nobody who can appoint another,
+                # and this CLI is the only recovery path.
+                sys.exit("refusing: that is the only superadmin")
+        user.is_superadmin = not args.remove
+        await db.commit()
+        await revocation.revoke_user(db, user.id, reason="superadmin flag changed via CLI")
+        print(f"{user.email} superadmin={user.is_superadmin}")
 
 
-def cmd_show_jwks(args) -> int:
-    with session_scope() as db:
-        print(json.dumps(keys.jwks(db), indent=2))
-    return 0
+async def cmd_list_users(args):
+    async with SessionLocal() as db:
+        for user in (await db.execute(select(User).order_by(User.created_at))).scalars():
+            tags = [f"{m.platform.slug}:{m.role.slug}" for m in user.memberships]
+            flag = " [superadmin]" if user.is_superadmin else ""
+            print(f"{user.email:40s} {user.status:10s} {' '.join(tags)}{flag}")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(prog="manage", description=__doc__)
+async def cmd_list_clients(args):
+    async with SessionLocal() as db:
+        platforms = {p.id: p.slug for p in (await db.execute(select(Platform))).scalars()}
+        for client in (await db.execute(select(OAuthClient).order_by(OAuthClient.client_id))).scalars():
+            print(f"{client.client_id:20s} {platforms.get(client.platform_id, '?'):14s} {', '.join(client.redirect_uris)}")
+
+
+async def cmd_rotate_key(args):
+    async with SessionLocal() as db:
+        key = await rotate_key(db)
+        print(f"new active kid: {key.kid}")
+        print("the retired public key stays in the JWKS until its tokens expire")
+
+
+async def cmd_jwks(args):
+    async with SessionLocal() as db:
+        print(json.dumps(await build_jwks(db), indent=2))
+
+
+async def cmd_prune(args):
+    async with SessionLocal() as db:
+        removed = await revocation.prune(db)
+        print(f"pruned {removed} expired revocation(s)")
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="manage", description="accounts.hynt.one operator CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("bootstrap", help="seed platforms, roles, plans, clients, superadmin")
-    p.add_argument("--email")
-    p.add_argument("--password")
-    p.add_argument("--name")
-    p.set_defaults(func=cmd_bootstrap)
+    p = sub.add_parser("bootstrap", help="seed platforms, roles, plans, clients and the superadmin")
+    p.add_argument("--superadmin-email", default="admin@hynt.one")
+    p.set_defaults(fn=cmd_bootstrap)
 
     p = sub.add_parser("create-user")
     p.add_argument("--email", required=True)
-    p.add_argument("--password")
     p.add_argument("--name")
-    p.add_argument("--superadmin", action="store_true")
-    p.add_argument("--invite", action="store_true",
-                   help="create without a password and print a 7-day activation link")
+    p.add_argument("--password")
     p.add_argument("--platform")
-    p.add_argument("--role")
-    p.set_defaults(func=cmd_create_user)
+    p.add_argument("--role", default="user")
+    p.add_argument("--plan")
+    p.set_defaults(fn=cmd_create_user)
 
-    p = sub.add_parser("grant", help="grant a role on a platform")
+    p = sub.add_parser("grant", help="give a user a role on a platform")
     p.add_argument("--email", required=True)
     p.add_argument("--platform", required=True)
     p.add_argument("--role", required=True)
-    p.set_defaults(func=cmd_grant)
+    p.add_argument("--plan")
+    p.set_defaults(fn=cmd_grant)
 
-    p = sub.add_parser("passwd")
+    p = sub.add_parser("passwd", help="set a password; ends every session")
     p.add_argument("--email", required=True)
     p.add_argument("--password")
-    p.set_defaults(func=cmd_passwd)
+    p.set_defaults(fn=cmd_passwd)
 
-    sub.add_parser("list-clients").set_defaults(func=cmd_list_clients)
-    sub.add_parser("rotate-key").set_defaults(func=cmd_rotate_key)
-    sub.add_parser("jwks").set_defaults(func=cmd_show_jwks)
+    p = sub.add_parser("suspend")
+    p.add_argument("--email", required=True)
+    p.add_argument("--undo", action="store_true")
+    p.set_defaults(fn=cmd_suspend)
+
+    p = sub.add_parser("superadmin", help="grant or remove the estate-wide superadmin flag")
+    p.add_argument("--email", required=True)
+    p.add_argument("--remove", action="store_true")
+    p.set_defaults(fn=cmd_superadmin)
+
+    sub.add_parser("list-users").set_defaults(fn=cmd_list_users)
+    sub.add_parser("list-clients").set_defaults(fn=cmd_list_clients)
+    sub.add_parser("rotate-key").set_defaults(fn=cmd_rotate_key)
+    sub.add_parser("jwks").set_defaults(fn=cmd_jwks)
+    sub.add_parser("prune-revocations").set_defaults(fn=cmd_prune)
 
     args = parser.parse_args()
-    return args.func(args)
+    asyncio.run(args.fn(args))
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

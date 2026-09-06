@@ -1,269 +1,235 @@
-"""JWKS fetching and token verification."""
+"""Verify Hynt access tokens locally.
 
+The point of this SDK is that it does *not* call accounts.hynt.one on the
+request path. It fetches the JWKS once, caches it, and verifies signatures in
+process. The only recurring call is the revocation list — one small cached
+request every ~30 seconds for the whole process, not one per user request.
+"""
 from __future__ import annotations
 
-import logging
 import threading
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 import jwt
-
-from hynt_sso.principal import Principal
-
-log = logging.getLogger("hynt_sso")
+from jwt import PyJWK
 
 
 class TokenError(Exception):
-    """The token is absent, malformed, expired, or not for this platform."""
+    """Raised for every reason a token is not acceptable. Deliberately one
+    class: a caller that branches on *why* a token failed tends to leak that
+    reason to the client, which is an oracle."""
+
+
+@dataclass
+class Principal:
+    """The caller, as the identity provider describes them for this platform."""
+
+    user_id: str
+    email: str
+    name: str
+    role: str
+    rank: int
+    permissions: list[str] = field(default_factory=list)
+    plan: str | None = None
+    plan_status: str | None = None
+    entitlements: list[str] = field(default_factory=list)
+    limits: dict[str, Any] = field(default_factory=dict)
+    session_id: str = ""
+    token_version: int = 0
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    #: Central ranks. A check is "at least this role", never string equality —
+    #: an admin passes has_role("staff") without every call site listing both.
+    RANKS = {"user": 10, "staff": 20, "admin": 30, "superadmin": 40}
+
+    def has_role(self, role: str) -> bool:
+        return self.rank >= self.RANKS.get(role, 10**6)
+
+    def has_permission(self, code: str) -> bool:
+        return code in self.permissions
+
+    def has_entitlement(self, code: str) -> bool:
+        return code in self.entitlements
+
+    def limit(self, key: str, default: Any = None) -> Any:
+        return self.limits.get(key, default)
+
+    @classmethod
+    def from_claims(cls, claims: dict[str, Any]) -> "Principal":
+        return cls(
+            user_id=claims.get("sub", ""),
+            email=claims.get("email", ""),
+            name=claims.get("name", ""),
+            role=claims.get("role", "user"),
+            rank=int(claims.get("rank", 0)),
+            permissions=list(claims.get("perms", [])),
+            plan=claims.get("plan"),
+            plan_status=claims.get("plan_status"),
+            entitlements=list(claims.get("ent", [])),
+            limits=dict(claims.get("lim", {})),
+            session_id=claims.get("sid", ""),
+            token_version=int(claims.get("tv", 0)),
+            raw=claims,
+        )
+
+
+class _Jwks:
+    """Cached public keys.
+
+    PyJWT's own PyJWKClient fetches with urllib, whose default user-agent
+    Cloudflare answers with 403 in front of accounts.hynt.one — the symptom is
+    every token being rejected for "Fail to fetch data from the url". httpx is
+    used instead (it gets through, and it is already a dependency here).
+
+    A miss on an unknown `kid` refetches once, ignoring the TTL: that is what
+    makes a key rotation take effect immediately rather than an hour later.
+    """
+
+    def __init__(self, url: str, ttl: int, timeout: float, headers: dict[str, str]):
+        self._url = url
+        self._ttl = ttl
+        self._timeout = timeout
+        self._headers = headers
+        self._lock = threading.Lock()
+        self._keys: dict[str, Any] = {}
+        self._fetched_at = 0.0
+
+    def _fetch(self) -> None:
+        data = httpx.get(self._url, timeout=self._timeout, headers=self._headers).raise_for_status().json()
+        keys = {}
+        for entry in data.get("keys", []):
+            try:
+                keys[entry["kid"]] = PyJWK(entry).key
+            except Exception:
+                continue  # one unusable key must not break the rest
+        if keys:
+            self._keys = keys
+            self._fetched_at = time.monotonic()
+
+    def key_for(self, kid: str) -> Any:
+        with self._lock:
+            stale = time.monotonic() - self._fetched_at > self._ttl
+            if not self._keys or stale:
+                self._fetch()
+            if kid not in self._keys:
+                # Unknown kid: the provider may have just rotated.
+                self._fetch()
+            key = self._keys.get(kid)
+        if key is None:
+            raise TokenError(f"unknown signing key {kid}")
+        return key
+
+
+class _Revocations:
+    """Polled cache of the published revocation list."""
+
+    def __init__(self, url: str, timeout: float = 3.0, headers: dict[str, str] | None = None):
+        self._url = url
+        self._timeout = timeout
+        self._headers = headers or {}
+        self._lock = threading.Lock()
+        self._users: set[str] = set()
+        self._sessions: set[str] = set()
+        self._fetched_at = 0.0
+        self._interval = 30.0
+
+    def _refresh_if_due(self) -> None:
+        now = time.monotonic()
+        if now - self._fetched_at < self._interval:
+            return
+        with self._lock:
+            if now - self._fetched_at < self._interval:
+                return
+            try:
+                data = httpx.get(self._url, timeout=self._timeout, headers=self._headers).json()
+            except Exception:
+                # Fail *open* on a fetch error, and retry soon. The alternative —
+                # refusing every token because the IdP blinked — turns a brief
+                # outage there into a total outage across the estate. The window
+                # is bounded by the 15-minute token lifetime either way.
+                self._fetched_at = now - self._interval + 5
+                return
+            self._users = set(data.get("users", []))
+            self._sessions = set(data.get("sessions", []))
+            self._interval = float(data.get("poll_after", 30))
+            self._fetched_at = now
+
+    def blocked(self, user_id: str, session_id: str) -> bool:
+        self._refresh_if_due()
+        return user_id in self._users or session_id in self._sessions
 
 
 class HyntSSO:
-    """Verifies access tokens issued by accounts.hynt.one.
-
-    Args:
-        issuer: e.g. ``https://accounts.hynt.one``. Must match the ``iss`` claim
-            exactly, so a token from a staging issuer is refused in production.
-        audience: this platform's slug — ``terminal``, ``xterminal`` or
-            ``intelligence``. A token minted for a sibling platform fails here,
-            which is what keeps one platform's leaked token useless on the next.
-        jwks_ttl: seconds to cache the key set. Shorter means a rotated key is
-            picked up sooner; a cache miss on an unknown ``kid`` refetches
-            immediately regardless, so this only bounds the *stale key* window.
-        leeway: clock skew allowance, in seconds.
-        check_revocations: poll the provider's revocation list so a suspended or
-            revoked account stops working within seconds instead of when its
-            access token expires. Costs one small cached request per
-            ``revocation_ttl``, not one per user request. On by default —
-            "revoked" should mean revoked.
-        revocation_ttl: seconds between polls — the worst-case delay between a
-            superadmin clicking revoke and this platform enforcing it. Leave it
-            as None to follow the interval the provider advertises; setting it
-            explicitly pins it, and an explicit value is never overridden by the
-            provider's hint.
-        fail_open_on_revocation_error: when the revocation list cannot be
-            fetched at all, whether to keep serving. Defaults to True: an
-            identity provider that is briefly unreachable must not sign every
-            user out of every platform at once. Set False for a service where
-            stale authorisation is worse than an outage.
-    """
-
     def __init__(
         self,
         issuer: str,
         audience: str,
         *,
         jwks_ttl: int = 3600,
-        leeway: int = 30,
-        timeout: float = 5.0,
-        http_client: httpx.Client | None = None,
         check_revocations: bool = True,
-        revocation_ttl: int | None = None,
-        fail_open_on_revocation_error: bool = True,
-    ) -> None:
+        leeway: int = 30,
+        timeout: float = 3.0,
+        origin: str | None = None,
+    ):
+        """`origin` overrides where the JWKS and revocation list are *fetched*
+        from, without changing the `iss` this validates against.
+
+        On a box that also runs accounts.hynt.one, pass
+        ``origin="http://127.0.0.1:8103"``: server-to-server calls then skip
+        the CDN entirely — no egress, no edge rules, and nothing to go wrong at
+        3am because a WAF rule changed."""
         self.issuer = issuer.rstrip("/")
         self.audience = audience
-        self.jwks_uri = f"{self.issuer}/.well-known/jwks.json"
-        self.jwks_ttl = jwks_ttl
         self.leeway = leeway
-        self._timeout = timeout
-        self._client = http_client
+        base = (origin or self.issuer).rstrip("/")
+        headers = {"User-Agent": f"hynt-sso/1.0 (+{self.issuer})"}
+        self._jwks = _Jwks(f"{base}/.well-known/jwks.json", jwks_ttl, timeout, headers)
+        self._revocations = (
+            _Revocations(f"{base}/api/v1/revocations", timeout, headers) if check_revocations else None
+        )
 
-        self.check_revocations = check_revocations
-        #: A value passed here is the operator's decision and stays put; without
-        #: one the provider's advertised interval is followed.
-        self._ttl_pinned = revocation_ttl is not None
-        self.revocation_ttl = revocation_ttl if revocation_ttl is not None else 30
-        self.fail_open_on_revocation_error = fail_open_on_revocation_error
-        self.revocation_uri = f"{self.issuer}/api/v1/revocations"
-
-        self._lock = threading.Lock()
-        self._keys: dict[str, Any] = {}
-        self._fetched_at: float = 0.0
-
-        self._revocation_lock = threading.Lock()
-        #: (sub, platform-or-None) -> minimum acceptable token_version
-        self._revocations: dict[tuple[str, str | None], int] = {}
-        self._revocations_at: float = 0.0
-        self._revocations_ok = False
-
-    # ------------------------------------------------------------------ keys
-    def _http(self) -> httpx.Client:
-        if self._client is None:
-            self._client = httpx.Client(timeout=self._timeout)
-        return self._client
-
-    def _refresh_keys(self, *, force: bool = False) -> None:
-        with self._lock:
-            fresh = (time.monotonic() - self._fetched_at) < self.jwks_ttl
-            if self._keys and fresh and not force:
-                return
-            try:
-                response = self._http().get(self.jwks_uri)
-                response.raise_for_status()
-                document = response.json()
-            except Exception as exc:  # noqa: BLE001
-                # Keep serving with the keys we have. The identity provider being
-                # briefly unreachable must not sign every user out of every
-                # platform at once.
-                if self._keys:
-                    log.warning("JWKS refresh failed (%s) — using cached keys", exc)
-                    return
-                raise TokenError(f"cannot fetch JWKS from {self.jwks_uri}: {exc}") from exc
-
-            self._keys = {
-                k["kid"]: jwt.PyJWK.from_dict(k).key
-                for k in document.get("keys", [])
-                if k.get("kid")
-            }
-            self._fetched_at = time.monotonic()
-            log.info("loaded %d signing key(s) from %s", len(self._keys), self.jwks_uri)
-
-    def _key_for(self, kid: str):
-        self._refresh_keys()
-        key = self._keys.get(kid)
-        if key is None:
-            # An unknown kid means a rotation happened since the last fetch.
-            # Refetching once here is what makes rotation invisible to users.
-            self._refresh_keys(force=True)
-            key = self._keys.get(kid)
-        if key is None:
-            raise TokenError(f"unknown signing key '{kid}'")
-        return key
-
-    # ------------------------------------------------------------ revocations
-    def _refresh_revocations(self) -> None:
-        with self._revocation_lock:
-            if (time.monotonic() - self._revocations_at) < self.revocation_ttl:
-                return
-            try:
-                response = self._http().get(self.revocation_uri)
-                response.raise_for_status()
-                document = response.json()
-            except Exception as exc:  # noqa: BLE001
-                # Keep the last known list and try again next time. Discarding it
-                # here would mean a momentary blip re-admits accounts that were
-                # revoked minutes ago.
-                log.warning("revocation refresh failed (%s)", exc)
-                self._revocations_at = time.monotonic()
-                if not self._revocations_ok and not self.fail_open_on_revocation_error:
-                    raise TokenError("revocation list unavailable") from exc
-                return
-
-            entries: dict[tuple[str, str | None], int] = {}
-            for entry in document.get("revocations", []):
-                sub = entry.get("sub")
-                if not sub:
-                    continue
-                key = (str(sub), entry.get("platform"))
-                entries[key] = max(entries.get(key, 0), int(entry.get("min_tv", 0)))
-
-            self._revocations = entries
-            self._revocations_at = time.monotonic()
-            self._revocations_ok = True
-
-            # The provider suggests how often to come back so the interval is
-            # consistent across platforms — but only when this one did not pin
-            # its own. Silently lengthening an interval an operator deliberately
-            # shortened would quietly weaken the guarantee they asked for.
-            suggested = document.get("poll_after_seconds")
-            if not self._ttl_pinned and isinstance(suggested, int) and suggested > 0:
-                self.revocation_ttl = suggested
-
-    def _assert_not_revoked(self, claims: dict[str, Any]) -> None:
-        if not self.check_revocations:
-            return
-        self._refresh_revocations()
-        if not self._revocations:
-            return
-
-        sub = str(claims.get("sub", ""))
-        version = int(claims.get("tv", 0) or 0)
-
-        # A revocation for this platform specifically, and one covering every
-        # platform, are both binding.
-        for key in ((sub, None), (sub, self.audience)):
-            minimum = self._revocations.get(key)
-            if minimum is not None and version < minimum:
-                raise TokenError("access has been revoked")
-
-    # ----------------------------------------------------------------- verify
     def verify(self, token: str) -> dict[str, Any]:
-        """Return the claims, or raise TokenError."""
+        """Signature, issuer, audience, expiry, revocation. Raises TokenError."""
         if not token:
-            raise TokenError("no token supplied")
-
+            raise TokenError("no token")
         try:
-            header = jwt.get_unverified_header(token)
-        except jwt.PyJWTError as exc:
-            raise TokenError(f"malformed token: {exc}") from exc
-
-        # Pin the algorithm. Trusting the header's `alg` is how a token signed
-        # with `none`, or an HMAC over the public key, gets accepted.
-        if header.get("alg") != "RS256":
-            raise TokenError(f"unexpected algorithm '{header.get('alg')}'")
-
-        key = self._key_for(header.get("kid", ""))
-
-        try:
+            kid = jwt.get_unverified_header(token).get("kid", "")
+            signing_key = self._jwks.key_for(kid)
             claims = jwt.decode(
                 token,
-                key,
+                signing_key,
                 algorithms=["RS256"],
-                issuer=self.issuer,
+                # audience is the whole point: a token minted for another
+                # platform must not verify here, however valid its signature.
                 audience=self.audience,
+                issuer=self.issuer,
                 leeway=self.leeway,
-                options={"require": ["exp", "iat", "iss", "aud", "sub"]},
+                options={"require": ["exp", "iat", "sub", "aud", "iss"]},
             )
-        except jwt.ExpiredSignatureError as exc:
-            raise TokenError("token has expired") from exc
-        except jwt.InvalidAudienceError as exc:
-            raise TokenError(f"token is not for '{self.audience}'") from exc
         except jwt.PyJWTError as exc:
-            raise TokenError(f"invalid token: {exc}") from exc
+            raise TokenError(str(exc)) from exc
 
-        if claims.get("typ") != "access":
-            raise TokenError("not an access token")
-
-        # Signature and expiry are not enough: the account behind the token must
-        # still be allowed in. This is the check that makes a superadmin's
-        # "revoke now" take effect in seconds rather than at the token's expiry.
-        self._assert_not_revoked(claims)
-
+        if self._revocations and self._revocations.blocked(claims.get("sub", ""), claims.get("sid", "")):
+            raise TokenError("revoked")
         return claims
 
     def principal(self, token: str) -> Principal:
         return Principal.from_claims(self.verify(token))
 
-    def principal_or_none(self, token: str | None) -> Principal | None:
-        """Non-raising variant, for WebSocket upgrades and optional auth."""
-        if not token:
-            return None
-        try:
-            return self.principal(token)
-        except TokenError:
-            return None
-
-    # ------------------------------------------------------------- utilities
-    @staticmethod
-    def bearer_from_header(authorization: str | None) -> str | None:
-        if not authorization:
-            return None
-        scheme, _, value = authorization.partition(" ")
-        return value.strip() if scheme.lower() == "bearer" and value.strip() else None
-
     def reject_reason(self, token: str | None) -> str:
-        """Why a token was refused — for logs, never for the client.
-
-        A WebSocket upgrade rejected before accept gives the browser a bare 403,
-        so without this the three causes that look identical in the console (no
-        token, wrong issuer, expired) are indistinguishable server-side too.
-        """
-        if not token:
-            return "no token presented"
+        """For logs only. Never return this to a client."""
         try:
-            self.verify(token)
+            self.verify(token or "")
+            return "ok"
         except TokenError as exc:
             return str(exc)
-        return "accepted"
+
+    # -- FastAPI convenience -------------------------------------------------
+
+    def bearer(self, authorization: str | None) -> Principal:
+        if not authorization or not authorization.lower().startswith("bearer "):
+            raise TokenError("missing bearer token")
+        return self.principal(authorization.split(" ", 1)[1].strip())

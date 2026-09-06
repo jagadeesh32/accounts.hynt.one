@@ -1,0 +1,9 @@
+[Unit]
+Description=Prune expired Hynt Accounts revocations
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/accounts.hynt.one/backend
+EnvironmentFile=/opt/accounts.hynt.one/backend/.env
+ExecStart=/opt/accounts.hynt.one/backend/.venv/bin/python -m scripts.manage prune-revocations

@@ -1,53 +1,56 @@
-"""Unauthenticated reads: the platform list and public pricing.
+"""The endpoints platforms and browsers read without a session.
 
-Separated from the admin surface so the marketing site can render pricing without
-any credential at all, and so it is obvious which reads are public.
+These three are the entire request-path contract with the rest of the estate:
+discovery, the JWKS, and the revocation list.
 """
+from fastapi import APIRouter, Depends, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from __future__ import annotations
+from app.config import settings
+from app.core.keys import jwks as build_jwks
+from app.db import get_db
+from app.services import revocation
 
-from cello import Blueprint
-from sqlalchemy import select
-
-from app.core.http import endpoint, not_found
-from app.models import Plan, Platform
-from app.schemas.serializers import plan_public, platform_public
-
-bp = Blueprint("/api/v1")
+router = APIRouter(tags=["public"])
 
 
-@bp.get("/platforms")
-@endpoint
-def list_platforms(request, db):
-    rows = db.scalars(
-        select(Platform).where(Platform.active.is_(True)).order_by(Platform.sort_order)
-    ).all()
-    return {"platforms": [platform_public(p) for p in rows]}
+@router.get("/.well-known/openid-configuration")
+async def discovery():
+    issuer = settings.issuer
+    return {
+        "issuer": issuer,
+        "authorization_endpoint": f"{issuer}/oauth/authorize",
+        "token_endpoint": f"{issuer}/oauth/token",
+        "end_session_endpoint": f"{issuer}/oauth/logout",
+        "jwks_uri": f"{issuer}/.well-known/jwks.json",
+        "revocation_list_endpoint": f"{issuer}/api/v1/revocations",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "code_challenge_methods_supported": ["S256"],
+        "id_token_signing_alg_values_supported": ["RS256"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "scopes_supported": ["openid", "profile", "email"],
+    }
 
 
-@bp.get("/platforms/{slug}/plans")
-@endpoint
-def list_plans(request, db):
-    """Public pricing for one platform."""
-    slug = request.params.get("slug")
-    platform = db.scalar(select(Platform).where(Platform.slug == slug))
-    if platform is None or not platform.active:
-        raise not_found(f"Unknown platform '{slug}'.")
-
-    rows = db.scalars(
-        select(Plan)
-        .where(Plan.platform_id == platform.id, Plan.active.is_(True))
-        .order_by(Plan.sort_order, Plan.price_cents)
-    ).all()
-    return {"platform": platform_public(platform), "plans": [plan_public(p) for p in rows]}
+@router.get("/.well-known/jwks.json")
+async def jwks(response: Response, db: AsyncSession = Depends(get_db)):
+    # Cached hard: every platform fetches this once and holds it. The TTL is
+    # what bounds how long a rotation takes to reach the estate.
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    return await build_jwks(db)
 
 
-@bp.get("/health")
-@endpoint
-def health(request, db):
-    """Liveness plus a real database round-trip — a health check that does not
-    touch the database will happily report green while every request 500s."""
+@router.get("/api/v1/revocations")
+async def revocations(response: Response, db: AsyncSession = Depends(get_db)):
+    # Polled every ~30s per platform. Short cache, never stale enough to matter.
+    response.headers["Cache-Control"] = "public, max-age=15"
+    return await revocation.current(db)
+
+
+@router.get("/api/v1/health")
+async def health(db: AsyncSession = Depends(get_db)):
     from sqlalchemy import text
 
-    db.execute(text("SELECT 1"))
-    return {"status": "ok", "service": "accounts.hynt.one"}
+    await db.execute(text("SELECT 1"))
+    return {"status": "ok", "issuer": settings.issuer}

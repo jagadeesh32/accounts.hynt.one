@@ -1,118 +1,116 @@
-"""SSO session lifecycle: create, resolve, touch, revoke.
+"""The SSO session: one row, one cookie, revocable by definition."""
+import uuid
+from datetime import timedelta
 
-This is the centre of the whole design. The cookie at ``.hynt.one`` is the fact
-that the user is signed in; every platform's access derives from it through the
-authorization-code flow, and revoking a row here is what makes a single logout
-actually reach all three platforms.
-"""
+from fastapi import Request, Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from __future__ import annotations
-
-from datetime import datetime, timedelta, timezone
-
-from sqlalchemy import select, update
-from sqlalchemy.orm import Session
-
-from app import config
-from app.core.security import new_secret, token_digest
-from app.models import SsoSession, User, UserStatus
+from app.config import settings
+from app.core.security import new_opaque_token, sha256
+from app.models.base import utcnow
+from app.models.identity import Session, User
 
 
-def create(db: Session, user: User, *, ip: str | None, agent: str | None) -> tuple[SsoSession, str]:
-    """Return the row and the raw secret to put in the cookie.
-
-    The raw value is returned once and never stored; only its SHA-256 lands in
-    the table.
-    """
-    now = datetime.now(timezone.utc)
-    raw = new_secret(32)
-    row = SsoSession(
+async def create_session(db: AsyncSession, user: User, request: Request) -> tuple[Session, str]:
+    """Returns (row, raw_cookie_value). The raw value is never stored."""
+    raw = new_opaque_token(32)
+    row = Session(
         user_id=user.id,
-        token_hash=token_digest(raw),
-        user_agent=(agent or "")[:500] or None,
-        ip_address=ip,
-        created_at=now,
-        last_seen_at=now,
-        expires_at=now + timedelta(seconds=config.SESSION_TTL_SEC),
+        token_hash=sha256(raw),
+        user_agent=(request.headers.get("user-agent") or "")[:400],
+        ip=client_ip(request),
+        expires_at=utcnow() + timedelta(days=settings.session_ttl_days),
     )
     db.add(row)
-    db.flush()
+    await db.commit()
+    await db.refresh(row)
     return row, raw
 
 
-def resolve(db: Session, raw: str | None) -> tuple[SsoSession, User] | None:
-    """Look up a live session and its user, or None.
-
-    Four things can make a cookie worthless and all of them are checked here:
-    the row is gone, it was revoked, it aged out (absolute or idle), or the
-    account behind it is no longer active.
-    """
+async def resolve_session(db: AsyncSession, request: Request) -> tuple[Session, User] | None:
+    """Cookie → (session, user), or None if anything about it is not current."""
+    raw = request.cookies.get(settings.cookie_name)
     if not raw:
         return None
 
-    row = db.scalar(select(SsoSession).where(SsoSession.token_hash == token_digest(raw)))
+    row = (
+        await db.execute(select(Session).where(Session.token_hash == sha256(raw)))
+    ).scalars().first()
     if row is None or row.revoked_at is not None:
         return None
 
-    now = datetime.now(timezone.utc)
-    if _aware(row.expires_at) <= now:
+    now = utcnow()
+    if row.expires_at <= now:
         return None
-    if _aware(row.last_seen_at) + timedelta(seconds=config.SESSION_IDLE_TTL_SEC) <= now:
+    # Idle expiry is separate from absolute expiry: a session left alone for a
+    # week dies even though its 30-day window is still open.
+    if row.last_seen_at + timedelta(days=settings.session_idle_days) <= now:
         return None
 
-    user = db.get(User, row.user_id)
-    if user is None or user.status != UserStatus.ACTIVE:
+    user = await db.get(User, row.user_id)
+    if user is None or user.status != "active":
         return None
+
+    # Cheap heartbeat — one write a minute per session at most.
+    if (now - row.last_seen_at).total_seconds() > 60:
+        row.last_seen_at = now
+        await db.commit()
 
     return row, user
 
 
-def touch(db: Session, row: SsoSession) -> None:
-    """Advance the idle clock.
-
-    Written at most once a minute: without the guard this turns every
-    authenticated GET into a write, and the row is contended by definition.
-    """
-    now = datetime.now(timezone.utc)
-    if (now - _aware(row.last_seen_at)).total_seconds() >= 60:
-        row.last_seen_at = now
-
-
-def revoke(db: Session, row: SsoSession) -> None:
+async def revoke_session(db: AsyncSession, row: Session) -> None:
     if row.revoked_at is None:
-        row.revoked_at = datetime.now(timezone.utc)
+        row.revoked_at = utcnow()
+        await db.commit()
 
 
-def revoke_all_for_user(db: Session, user_id, *, except_session_id=None) -> int:
-    """Sign out everywhere. Returns the number of sessions ended."""
-    now = datetime.now(timezone.utc)
-    stmt = (
-        update(SsoSession)
-        .where(SsoSession.user_id == user_id, SsoSession.revoked_at.is_(None))
-        .values(revoked_at=now)
-    )
-    if except_session_id is not None:
-        stmt = stmt.where(SsoSession.id != except_session_id)
-    return db.execute(stmt).rowcount or 0
-
-
-def list_for_user(db: Session, user_id) -> list[SsoSession]:
-    now = datetime.now(timezone.utc)
-    return list(
-        db.scalars(
-            select(SsoSession)
-            .where(
-                SsoSession.user_id == user_id,
-                SsoSession.revoked_at.is_(None),
-                SsoSession.expires_at > now,
-            )
-            .order_by(SsoSession.last_seen_at.desc())
+async def revoke_all_sessions(db: AsyncSession, user_id: uuid.UUID, *, except_id: uuid.UUID | None = None) -> int:
+    rows = (
+        await db.execute(
+            select(Session).where(Session.user_id == user_id, Session.revoked_at.is_(None))
         )
+    ).scalars().all()
+    now = utcnow()
+    count = 0
+    for row in rows:
+        if except_id and row.id == except_id:
+            continue
+        row.revoked_at = now
+        count += 1
+    if count:
+        await db.commit()
+    return count
+
+
+def set_session_cookie(response: Response, raw: str) -> None:
+    """Cello stored response headers in a HashMap, so a response could carry only
+    one Set-Cookie — the reason this design has exactly one cookie and returns
+    access tokens in the body. The constraint is kept: do not add a second."""
+    response.set_cookie(
+        key=settings.cookie_name,
+        value=raw,
+        max_age=settings.session_ttl_days * 86400,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        domain=settings.cookie_domain or None,
+        path="/",
     )
 
 
-def _aware(value: datetime) -> datetime:
-    """psycopg2 returns aware datetimes for timestamptz, but a value that came
-    from a naive default would compare as if it were UTC and silently skew every
-    expiry check. Normalise rather than trust."""
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=settings.cookie_name,
+        domain=settings.cookie_domain or None,
+        path="/",
+    )
+
+
+def client_ip(request: Request) -> str:
+    """Behind nginx, so X-Forwarded-For's first hop is the real client."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()[:64]
+    return (request.client.host if request.client else "")[:64]

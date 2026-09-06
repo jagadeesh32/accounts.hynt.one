@@ -1,109 +1,104 @@
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { api, ApiError, type Me } from "../api";
+
 /**
- * Sign in.
+ * The one password form in the estate.
  *
- * When a platform sent the user here, `?next=` holds the original /oauth/authorize
- * URL. On success the browser goes straight back to it, the SSO cookie is now
- * present, and the platform receives its code without the user seeing this page
- * again. That replay is the whole hand-off.
+ * `next` carries the whole /oauth/authorize request the user was bounced from,
+ * so signing in lands them back in the flow rather than on the launcher.
  */
-import { useState, type FormEvent } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { api, ApiError } from "../lib/api";
-import { useSession } from "../lib/session";
-import { Alert, Field, Spinner } from "../components/ui";
-
-/** Only allow a `next` that points back at this origin's OAuth endpoint.
- *  An unchecked `next` makes the login page an open redirect — the exact thing
- *  the authorize endpoint refuses to be. */
-function safeNext(raw: string | null): string | null {
-  if (!raw) return null;
-  try {
-    const url = new URL(raw, window.location.origin);
-    if (url.origin !== window.location.origin) return null;
-    if (!url.pathname.startsWith("/oauth/")) return null;
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-export default function Login() {
+export function LoginPage({ me, onSignedIn }: { me: Me | null; onSignedIn: () => void }) {
   const [params] = useSearchParams();
-  const navigate = useNavigate();
-  const { refresh } = useSession();
+  const next = params.get("next") || "/";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const next = safeNext(params.get("next"));
+  // Already signed in and sent here by a platform: complete the flow silently
+  // rather than asking for a password that is not needed.
+  useEffect(() => {
+    if (me && next.startsWith("/oauth/")) window.location.replace(next);
+  }, [me, next]);
 
-  async function onSubmit(event: FormEvent) {
+  async function submit(event: React.FormEvent) {
     event.preventDefault();
-    setError(null);
     setBusy(true);
+    setError(null);
     try {
-      await api.login(email.trim(), password);
-      if (next) {
-        // A full navigation, not a router push: the destination is the identity
-        // provider's own authorize endpoint, not a route in this SPA.
-        window.location.assign(next);
+      const result = await api.post<{ mfa_required?: boolean }>("/api/v1/auth/login", {
+        email: email.trim(),
+        password,
+        otp: otp || null,
+      });
+      if (result.mfa_required) {
+        setMfaRequired(true);
+        setBusy(false);
         return;
       }
-      await refresh();
-      navigate("/", { replace: true });
+      // A /oauth/… next is a server route, not a React one: it must be a real
+      // navigation or the SPA router would try to render it and 404.
+      if (next.startsWith("/oauth/")) {
+        window.location.replace(next);
+        return;
+      }
+      onSignedIn();
+      window.location.replace(next);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not sign in. Try again.");
+      setError(err instanceof ApiError ? err.message : "Sign-in failed.");
       setBusy(false);
     }
   }
 
   return (
-    <div className="auth-page">
-      <form className="auth-card" onSubmit={onSubmit}>
-        <div className="auth-brand">
-          <span className="brand-mark">H</span>
-          <span style={{ fontWeight: 700, fontSize: 16 }}>Hynt</span>
+    <div className="login-page">
+      <form className="login-card" onSubmit={submit}>
+        <div className="login-brand">
+          <span className="brand-mark big">H</span>
+          <h1>Sign in to Hynt</h1>
+          <p className="muted">One account for Terminal, X-Terminal and Intelligence.</p>
         </div>
-        <h1 className="auth-title">Sign in</h1>
-        <p className="auth-sub">
-          {next ? "Continue to the app you were opening." : "One account for every Hynt platform."}
-        </p>
 
-        {error ? <Alert kind="error">{error}</Alert> : null}
+        {error && <div className="alert error">{error}</div>}
 
-        <Field label="Email">
+        <label className="field">
+          <span>Email</span>
           <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="username"
-            autoFocus
-            required
+            type="email" value={email} autoFocus required autoComplete="username"
+            onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com"
           />
-        </Field>
+        </label>
 
-        <Field label="Password">
+        <label className="field">
+          <span>Password</span>
           <input
-            type="password"
-            value={password}
+            type="password" value={password} required autoComplete="current-password"
             onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            required
           />
-        </Field>
+        </label>
 
-        <div style={{ marginTop: 18 }}>
-          <button className="btn btn-primary btn-block" disabled={busy || !email || !password}>
-            {busy ? <Spinner /> : null}
-            {busy ? "Signing in…" : "Sign in"}
-          </button>
-        </div>
+        {mfaRequired && (
+          <label className="field">
+            <span>Verification code</span>
+            <input
+              type="text" value={otp} autoFocus inputMode="numeric" maxLength={6}
+              placeholder="123456" onChange={(e) => setOtp(e.target.value)}
+            />
+            <small className="muted">From your authenticator app.</small>
+          </label>
+        )}
 
-        <div className="auth-foot">
-          <Link to="/forgot-password">Forgot your password?</Link>
-        </div>
+        <button className="btn primary wide" type="submit" disabled={busy}>
+          {busy ? "Signing in…" : mfaRequired ? "Verify and continue" : "Sign in"}
+        </button>
+
+        <p className="fineprint muted">
+          Signing in here signs you in across every Hynt platform.
+        </p>
       </form>
     </div>
   );

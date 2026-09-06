@@ -1,92 +1,65 @@
 """accounts.hynt.one — the Hynt identity provider.
 
-Run:
-    python -m app.main
+Served by Uvicorn on 127.0.0.1:8103 behind nginx (see deploy/nginx.conf), which
+also serves the built SPA from /var/www/accounts.
 """
-
-from __future__ import annotations
-
 import logging
 
-from cello import App
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from app import config
 from app.api import admin, auth, me, oauth, public, superadmin
+from app.config import settings
 
-logging.basicConfig(
-    level=logging.DEBUG if config.DEBUG else logging.INFO,
-    format="%(asctime)s  %(levelname)-7s %(name)-14s %(message)s",
-    datefmt="%H:%M:%S",
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+log = logging.getLogger("hynt.accounts")
+
+app = FastAPI(
+    title="Hynt Accounts",
+    description="One account for Terminal, X-Terminal and Intelligence.",
+    version="1.0.0",
+    docs_url="/api/docs",
+    openapi_url="/api/openapi.json",
 )
-log = logging.getLogger("hynt.main")
 
-app = App()
+# Only ever populated in dev. In production the SPA is same-origin behind nginx
+# and the platform SPAs never call this API directly — they redirect to it.
+if settings.cors_list:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_list,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-# Cross-origin reads from the three platform SPAs. Cello's CORS middleware
-# cannot advertise Allow-Credentials from Python, which suits this design: the
-# SSO cookie is only ever sent on same-origin navigations to this host, and the
-# token endpoint is authenticated by PKCE rather than by cookie.
-app.enable_cors(config.CORS_ORIGINS)
-app.enable_compression()
-if config.DEBUG:
-    app.enable_logging()
+app.include_router(public.router)
+app.include_router(auth.router)
+app.include_router(oauth.router)
+app.include_router(me.router)
+app.include_router(admin.router)
+app.include_router(superadmin.router)
 
-# Sync handlers hold a database connection, so they are the blocking kind.
-# Cello times them and moves them onto its bounded threadpool once observed to
-# block; the pool is sized here so a burst of logins (Argon2 is deliberately
-# slow) cannot starve the accept loop.
-try:
-    from cello import ThreadPoolConfig
 
-    app.set_threadpool(ThreadPoolConfig(size=64, offload_threshold_ms=1, adaptive=True))
-except Exception:  # noqa: BLE001 — older builds without the knob still work
-    log.debug("threadpool tuning unavailable in this Cello build")
-
-app.register_blueprint(public.bp)
-app.register_blueprint(auth.bp)
-app.register_blueprint(me.bp)
-app.register_blueprint(admin.bp)
-app.register_blueprint(superadmin.bp)
-app.register_blueprint(superadmin.public_bp)
-app.register_blueprint(oauth.bp)
-app.register_blueprint(oauth.well_known)
+@app.exception_handler(Exception)
+async def unhandled(request: Request, exc: Exception):
+    # Never leak a stack trace to a browser at an auth endpoint.
+    log.exception("unhandled error at %s %s", request.method, request.url.path)
+    return JSONResponse({"detail": "Internal error"}, status_code=500)
 
 
 @app.on_event("startup")
-def on_startup():
-    """Fail loudly at boot rather than on the first login.
+async def startup():
+    from app.core.keys import get_active_key
+    from app.db import SessionLocal
 
-    A missing database or an unusable signing key makes every request fail; that
-    should be visible in the startup logs, not discovered by a user.
-    """
-    from app.core import keys
-    from app.db import session_scope
-
-    with session_scope() as db:
-        key = keys.ensure_key(db)
-    log.info("signing key %s active (%s)", key.kid, config.JWT_ALG)
-    log.info("issuer   %s", config.ISSUER)
-    log.info("cookie   %s domain=%s secure=%s",
-             config.COOKIE_NAME, config.COOKIE_DOMAIN or "(host-only)", config.COOKIE_SECURE)
-
-
-@app.get("/")
-def root(request):
-    return {
-        "service": "accounts.hynt.one",
-        "issuer": config.ISSUER,
-        "discovery": "/.well-known/openid-configuration",
-    }
-
-
-def main() -> None:
-    app.run(
-        host=config.HOST,
-        port=config.PORT,
-        env="production" if config.IS_PROD else "development",
-        workers=config.WORKERS,
-    )
+    async with SessionLocal() as db:
+        key = await get_active_key(db)
+        log.info("issuer=%s signing kid=%s", settings.issuer, key.kid)
 
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+
+    uvicorn.run("app.main:app", host="127.0.0.1", port=9000, reload=True)

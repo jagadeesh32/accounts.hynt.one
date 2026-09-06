@@ -1,110 +1,162 @@
-"""The signed-in user's own account: profile, sessions, access, subscriptions."""
+"""The signed-in user's own account: profile, password, MFA, launcher."""
+import io
 
-from __future__ import annotations
-
-import re
-
-from cello import Blueprint
+import pyotp
+import qrcode
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import audit, sessions
-from app.core.authz import authenticated
-from app.core.http import bad_request, body_json, conflict, not_found
-from app.models import Membership, Subscription, User
-from app.schemas.serializers import access_entry, session_public, user_public
+from app.api.schemas import PasswordChangeIn, ProfileIn
+from app.config import settings
+from app.core import audit
+from app.core.authz import Actor, current_actor, platform_claims
+from app.core.security import hash_password, password_problem, verify_password
+from app.core.sessions import revoke_all_sessions
+from app.db import get_db
+from app.models.rbac import Platform
+from app.services import revocation
 
-bp = Blueprint("/api/v1/me")
-
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-@bp.get("")
-@authenticated
-def profile(request, db, ctx):
-    return {"user": user_public(ctx.user)}
+router = APIRouter(prefix="/api/v1/me", tags=["me"])
 
 
-@bp.patch("")
-@authenticated
-def update_profile(request, db, ctx):
-    """Edit display name and avatar.
-
-    Email is deliberately not editable here. It is the identity key across every
-    platform, so changing it needs a verification round-trip rather than a PATCH.
-    """
-    data = body_json(request)
-
-    if "full_name" in data:
-        name = (data.get("full_name") or "").strip()
-        if not name:
-            raise bad_request("Your name cannot be empty.")
-        ctx.user.full_name = name[:160]
-
-    if "avatar_url" in data:
-        ctx.user.avatar_url = (data.get("avatar_url") or "").strip() or None
-
-    audit.record(db, audit.USER_UPDATED, actor_user_id=ctx.user.id, target_type="user",
-                 target_id=ctx.user.id, ip=ctx.ip, agent=ctx.agent, self_service=True)
-    return {"user": user_public(ctx.user)}
-
-
-@bp.get("/access")
-@authenticated
-def my_access(request, db, ctx):
-    """Every platform this account can reach, with role, permissions and plan.
-
-    This is what the accounts dashboard renders as the app launcher, and what a
-    platform can call to decide whether to offer a link to its siblings.
-    """
-    memberships = db.scalars(
-        select(Membership).where(Membership.user_id == ctx.user.id, Membership.active.is_(True))
-    ).all()
-    subs = {
-        s.platform_id: s
-        for s in db.scalars(select(Subscription).where(Subscription.user_id == ctx.user.id))
+@router.get("")
+async def profile(actor: Actor = Depends(current_actor)):
+    u = actor.user
+    return {
+        "id": str(u.id),
+        "email": u.email,
+        "full_name": u.full_name or "",
+        "status": u.status,
+        "is_superadmin": u.is_superadmin,
+        "mfa_enabled": u.mfa_enabled,
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+        "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
     }
-    entries = [access_entry(m, subs.get(m.platform_id)) for m in memberships]
-    entries.sort(key=lambda e: e["platform"]["sort_order"])
-    return {"access": entries, "is_superadmin": ctx.user.is_superadmin}
 
 
-@bp.get("/sessions")
-@authenticated
-def my_sessions(request, db, ctx):
-    """Live sessions, so a user can see and end a login they do not recognise."""
-    rows = sessions.list_for_user(db, ctx.user.id)
-    return {"sessions": [session_public(r, current_id=ctx.session.id) for r in rows]}
+@router.patch("")
+async def update_profile(
+    body: ProfileIn,
+    request: Request,
+    actor: Actor = Depends(current_actor),
+    db: AsyncSession = Depends(get_db),
+):
+    if body.full_name is not None:
+        actor.user.full_name = body.full_name.strip()
+    await db.commit()
+    await audit.record(db, action="profile.updated", actor_user_id=actor.user.id, request=request)
+    return await profile(actor)
 
 
-@bp.delete("/sessions/{session_id}")
-@authenticated
-def end_session(request, db, ctx):
-    """End one other session. The current one is refused — that is what logout
-    is for, and ending it here would leave the SPA holding a dead cookie with no
-    Set-Cookie to clear it."""
-    target_id = request.params.get("session_id")
+@router.get("/platforms")
+async def my_platforms(actor: Actor = Depends(current_actor), db: AsyncSession = Depends(get_db)):
+    """What the launcher renders: every platform, with this user's standing on
+    each. Platforms they are not a member of are listed too, greyed out — a
+    missing tile reads as a bug, an explicit "no access" reads as an answer."""
+    platforms = (
+        await db.execute(select(Platform).where(Platform.is_active.is_(True)).order_by(Platform.slug))
+    ).scalars().all()
 
-    if str(ctx.session.id) == target_id:
-        raise bad_request("Use sign out to end the session you are using.",
-                          code="cannot_end_current")
+    out = []
+    for platform in platforms:
+        claims = await platform_claims(db, actor.user, platform)
+        out.append(
+            {
+                "slug": platform.slug,
+                "name": platform.name,
+                "description": platform.description,
+                "icon": platform.icon,
+                "url": platform.base_url,
+                "member": claims is not None,
+                "role": claims["role"] if claims else None,
+                "plan": claims["plan"] if claims else None,
+                "plan_status": claims["plan_status"] if claims else None,
+                "entitlements": claims["entitlements"] if claims else [],
+            }
+        )
+    return {"platforms": out}
 
-    for row in sessions.list_for_user(db, ctx.user.id):
-        if str(row.id) == target_id:
-            sessions.revoke(db, row)
-            audit.record(db, audit.SESSIONS_REVOKED, actor_user_id=ctx.user.id,
-                         target_type="session", target_id=row.id, ip=ctx.ip, agent=ctx.agent)
-            return {"ok": True}
 
-    raise not_found("That session no longer exists.")
+@router.post("/password")
+async def change_password(
+    body: PasswordChangeIn,
+    request: Request,
+    actor: Actor = Depends(current_actor),
+    db: AsyncSession = Depends(get_db),
+):
+    if not verify_password(body.current_password, actor.user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Current password is incorrect")
+    problem = password_problem(body.new_password)
+    if problem:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, problem)
+
+    actor.user.password_hash = hash_password(body.new_password)
+    # A password change is a "someone may have been in here" event: bump the
+    # token version so live access tokens die, and end every other session.
+    actor.user.token_version += 1
+    await db.commit()
+
+    await revoke_all_sessions(db, actor.user.id, except_id=actor.session.id)
+    await revocation.revoke_user(db, actor.user.id, reason="password changed")
+    await audit.record(db, action="password.changed", actor_user_id=actor.user.id, request=request)
+    return {"ok": True}
 
 
-@bp.post("/sessions/revoke-all")
-@authenticated
-def revoke_all(request, db, ctx):
-    """Sign out everywhere else, and invalidate every access token already issued
-    by bumping ``token_version``."""
-    revoked = sessions.revoke_all_for_user(db, ctx.user.id, except_session_id=ctx.session.id)
-    ctx.user.token_version += 1
-    audit.record(db, audit.SESSIONS_REVOKED, actor_user_id=ctx.user.id, ip=ctx.ip,
-                 agent=ctx.agent, count=revoked, all_devices=True)
-    return {"ok": True, "sessions_revoked": revoked}
+@router.post("/mfa/setup")
+async def mfa_setup(actor: Actor = Depends(current_actor), db: AsyncSession = Depends(get_db)):
+    """Issues a secret but does not enable it — enabling requires proving the
+    authenticator app actually holds it (see /mfa/enable)."""
+    if actor.user.mfa_enabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Two-factor is already on")
+    secret = pyotp.random_base32()
+    actor.user.mfa_secret = secret
+    await db.commit()
+    uri = pyotp.TOTP(secret).provisioning_uri(name=actor.user.email, issuer_name="Hynt")
+    return {"secret": secret, "otpauth_uri": uri}
+
+
+@router.get("/mfa/qr.png")
+async def mfa_qr(actor: Actor = Depends(current_actor)):
+    if not actor.user.mfa_secret:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Start setup first")
+    uri = pyotp.TOTP(actor.user.mfa_secret).provisioning_uri(name=actor.user.email, issuer_name="Hynt")
+    buf = io.BytesIO()
+    qrcode.make(uri).save(buf, format="PNG")
+    return Response(buf.getvalue(), media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/mfa/enable")
+async def mfa_enable(
+    payload: dict,
+    request: Request,
+    actor: Actor = Depends(current_actor),
+    db: AsyncSession = Depends(get_db),
+):
+    code = str(payload.get("otp", "")).strip()
+    if not actor.user.mfa_secret:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Start setup first")
+    if not pyotp.TOTP(actor.user.mfa_secret).verify(code, valid_window=1):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That code did not match")
+    actor.user.mfa_enabled = True
+    await db.commit()
+    await audit.record(db, action="mfa.enabled", actor_user_id=actor.user.id, request=request)
+    return {"ok": True}
+
+
+@router.post("/mfa/disable")
+async def mfa_disable(
+    payload: dict,
+    request: Request,
+    actor: Actor = Depends(current_actor),
+    db: AsyncSession = Depends(get_db),
+):
+    # Turning a factor off is a credential change: require the password, not
+    # just the live session.
+    if not verify_password(str(payload.get("password", "")), actor.user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Password is incorrect")
+    actor.user.mfa_enabled = False
+    actor.user.mfa_secret = None
+    await db.commit()
+    await audit.record(db, action="mfa.disabled", actor_user_id=actor.user.id, request=request)
+    return {"ok": True}

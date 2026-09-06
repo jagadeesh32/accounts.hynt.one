@@ -1,54 +1,36 @@
-"""Alembic environment.
-
-Imports app.models so Base.metadata is complete; autogenerate against a partial
-metadata proposes dropping every table it cannot see.
-"""
-
-from __future__ import annotations
-
+"""Alembic runs synchronously; the app runs on asyncpg. The URL is translated
+here rather than kept twice in two spellings that can drift apart."""
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from app import config as app_config
-from app.db.base import Base
+from app.config import settings
+from app.db import Base
 import app.models  # noqa: F401  — registers every table on Base.metadata
 
 config = context.config
-config.set_main_option("sqlalchemy.url", app_config.DATABASE_URL.replace("%", "%%"))
-
-if config.config_file_name is not None:
+if config.config_file_name:
     fileConfig(config.config_file_name)
+
+sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
+config.set_main_option("sqlalchemy.url", sync_url)
 
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
-        target_metadata=target_metadata,
-        literal_binds=True,
-        compare_type=True,
-        dialect_opts={"paramstyle": "named"},
-    )
+    context.configure(url=sync_url, target_metadata=target_metadata, literal_binds=True)
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online() -> None:
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
+        config.get_section(config.config_ini_section, {}), prefix="sqlalchemy.", poolclass=pool.NullPool
     )
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            compare_type=True,
-            compare_server_default=True,
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
 

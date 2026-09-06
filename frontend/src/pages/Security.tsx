@@ -1,163 +1,160 @@
-/** Password and active sessions — the two things a user needs when they suspect
- *  their account has been used by someone else. */
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, ApiError, type SessionRow } from "../lib/api";
-import { Alert, Badge, Empty, Field, Spinner, describeAgent, formatDate, relativeTime } from "../components/ui";
+import { useEffect, useState } from "react";
+import { api, ApiError, type Me, type SessionRow } from "../api";
 
-export default function Security() {
+export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void }) {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const [loading, setLoading] = useState(true);
-
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [mfaSetup, setMfaSetup] = useState<{ secret: string } | null>(null);
+  const [otp, setOtp] = useState("");
+  const [disablePassword, setDisablePassword] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const result = await api.mySessions();
-      setSessions(result.sessions);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const loadSessions = () =>
+    api.get<{ sessions: SessionRow[] }>("/api/v1/auth/sessions").then((d) => setSessions(d.sessions));
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadSessions();
+  }, []);
 
-  const mismatch = confirm.length > 0 && next !== confirm;
-
-  async function changePassword(event: FormEvent) {
-    event.preventDefault();
-    if (mismatch) return;
-    setBusy(true);
-    setError(null);
-    setMessage(null);
+  async function act(fn: () => Promise<unknown>, ok: string) {
+    setNote(null);
     try {
-      const result = await api.changePassword(current, next);
-      setMessage(
-        result.sessions_revoked > 0
-          ? `Password updated. ${result.sessions_revoked} other session(s) were signed out.`
-          : "Password updated.",
-      );
-      setCurrent("");
-      setNext("");
-      setConfirm("");
-      await load();
+      await fn();
+      setNote({ kind: "ok", text: ok });
+      await loadSessions();
+      onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not change your password.");
-    } finally {
-      setBusy(false);
+      setNote({ kind: "error", text: err instanceof ApiError ? err.message : "Something went wrong." });
     }
-  }
-
-  async function endSession(id: string) {
-    await api.endSession(id);
-    await load();
-  }
-
-  async function endAll() {
-    const result = await api.revokeAllSessions();
-    setMessage(`Signed out of ${result.sessions_revoked} other session(s).`);
-    await load();
   }
 
   return (
-    <div className="content">
-      <h1 className="page-title">Security</h1>
-      <p className="page-sub">Your password and every device signed in to Hynt.</p>
+    <section className="page">
+      <header className="page-head">
+        <h1>Security</h1>
+        <p className="muted">Your password, two-factor and signed-in devices.</p>
+      </header>
 
-      <form className="card" onSubmit={changePassword}>
-        <h2 className="card-title">Change password</h2>
-        <p className="card-sub" style={{ marginBottom: 14 }}>
-          Changing your password signs you out of every other device.
+      {note && <div className={`alert ${note.kind === "ok" ? "ok" : "error"}`}>{note.text}</div>}
+
+      <div className="card">
+        <h2>Password</h2>
+        <p className="muted">
+          Changing your password signs you out of every other device, everywhere.
         </p>
+        <form
+          className="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void act(
+              () => api.post("/api/v1/me/password", { current_password: current, new_password: next }),
+              "Password changed. Other devices have been signed out.",
+            ).then(() => { setCurrent(""); setNext(""); });
+          }}
+        >
+          <input type="password" placeholder="Current password" value={current} required
+                 autoComplete="current-password" onChange={(e) => setCurrent(e.target.value)} />
+          <input type="password" placeholder="New password (10+ characters)" value={next} required
+                 minLength={10} autoComplete="new-password" onChange={(e) => setNext(e.target.value)} />
+          <button className="btn primary" type="submit">Change</button>
+        </form>
+      </div>
 
-        {error ? <Alert kind="error">{error}</Alert> : null}
-        {message ? <Alert kind="success">{message}</Alert> : null}
-
-        <Field label="Current password">
-          <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)}
-                 autoComplete="current-password" required />
-        </Field>
-        <Field label="New password" hint="At least 10 characters.">
-          <input type="password" value={next} onChange={(e) => setNext(e.target.value)}
-                 autoComplete="new-password" required minLength={10} />
-        </Field>
-        <Field label="Confirm new password">
-          <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
-                 autoComplete="new-password" required />
-        </Field>
-        {mismatch ? (
-          <div className="faint" style={{ color: "var(--danger)", marginTop: 6 }}>
-            Passwords do not match.
-          </div>
-        ) : null}
-
-        <div style={{ marginTop: 16 }}>
-          <button className="btn btn-primary"
-                  disabled={busy || mismatch || !current || next.length < 10}>
-            {busy ? <Spinner /> : null} Update password
-          </button>
-        </div>
-      </form>
+      <div className="card">
+        <h2>Two-factor authentication</h2>
+        {me.mfa_enabled ? (
+          <>
+            <p className="ok-text">Two-factor is on.</p>
+            <form className="row" onSubmit={(e) => {
+              e.preventDefault();
+              void act(() => api.post("/api/v1/me/mfa/disable", { password: disablePassword }), "Two-factor turned off.")
+                .then(() => setDisablePassword(""));
+            }}>
+              <input type="password" placeholder="Confirm your password" value={disablePassword} required
+                     onChange={(e) => setDisablePassword(e.target.value)} />
+              <button className="btn danger" type="submit">Turn off</button>
+            </form>
+          </>
+        ) : mfaSetup ? (
+          <>
+            <p className="muted">Scan this with your authenticator app, then enter the code it shows.</p>
+            <div className="mfa">
+              <img className="qr" src="/api/v1/me/mfa/qr.png" alt="Two-factor QR code" />
+              <div>
+                <p className="muted">Or enter this key by hand:</p>
+                <code className="secret">{mfaSetup.secret}</code>
+              </div>
+            </div>
+            <form className="row" onSubmit={(e) => {
+              e.preventDefault();
+              void act(() => api.post("/api/v1/me/mfa/enable", { otp }), "Two-factor is on.")
+                .then(() => { setMfaSetup(null); setOtp(""); });
+            }}>
+              <input inputMode="numeric" maxLength={6} placeholder="123456" value={otp} required
+                     onChange={(e) => setOtp(e.target.value)} />
+              <button className="btn primary" type="submit">Turn on</button>
+            </form>
+          </>
+        ) : (
+          <>
+            <p className="muted">Add a second step when signing in.</p>
+            <button className="btn" onClick={() => {
+              void api.post<{ secret: string }>("/api/v1/me/mfa/setup").then(setMfaSetup);
+            }}>Set up two-factor</button>
+          </>
+        )}
+      </div>
 
       <div className="card">
         <div className="card-head">
-          <div>
-            <h2 className="card-title">Active sessions</h2>
-            <p className="card-sub">Each one can open any platform without signing in again.</p>
-          </div>
-          {sessions.length > 1 ? (
-            <button className="btn btn-danger btn-sm" onClick={() => void endAll()}>
-              Sign out everywhere else
-            </button>
-          ) : null}
+          <h2>Signed-in devices</h2>
+          <button className="btn ghost" onClick={() => void act(
+            () => api.post("/api/v1/auth/sessions/revoke-others"), "Other devices signed out.",
+          )}>Sign out everywhere else</button>
         </div>
-
-        {loading ? (
-          <Empty><Spinner /></Empty>
-        ) : sessions.length === 0 ? (
-          <Empty>No active sessions.</Empty>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Device</th>
-                  <th>IP address</th>
-                  <th>Last active</th>
-                  <th>Signed in</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {sessions.map((row) => (
-                  <tr key={row.id}>
-                    <td>
-                      {describeAgent(row.user_agent)}{" "}
-                      {row.current ? <Badge kind="active">this device</Badge> : null}
-                    </td>
-                    <td className="mono">{row.ip_address ?? "—"}</td>
-                    <td className="muted">{relativeTime(row.last_seen_at)}</td>
-                    <td className="muted">{formatDate(row.created_at)}</td>
-                    <td style={{ textAlign: "right" }}>
-                      {row.current ? null : (
-                        <button className="btn btn-danger btn-sm" onClick={() => void endSession(row.id)}>
-                          Sign out
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <table className="table">
+          <thead>
+            <tr><th>Device</th><th>IP</th><th>Last seen</th><th /></tr>
+          </thead>
+          <tbody>
+            {sessions.map((s) => (
+              <tr key={s.id}>
+                <td>
+                  {shortenAgent(s.user_agent)}
+                  {s.current && <span className="chip small">this device</span>}
+                </td>
+                <td className="mono">{s.ip}</td>
+                <td>{new Date(s.last_seen_at).toLocaleString()}</td>
+                <td className="right">
+                  {!s.current && (
+                    <button className="btn small danger" onClick={() => void act(
+                      () => api.del(`/api/v1/auth/sessions/${s.id}`), "Device signed out.",
+                    )}>Sign out</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-    </div>
+    </section>
   );
+}
+
+/** User agents are long and mostly noise; show the part a person recognises. */
+function shortenAgent(agent: string | null): string {
+  if (!agent) return "Unknown device";
+  const browser = /Edg\//.test(agent) ? "Edge"
+    : /Chrome\//.test(agent) ? "Chrome"
+    : /Safari\//.test(agent) ? "Safari"
+    : /Firefox\//.test(agent) ? "Firefox"
+    : "Browser";
+  const os = /Windows/.test(agent) ? "Windows"
+    : /Mac OS X/.test(agent) ? "macOS"
+    : /Android/.test(agent) ? "Android"
+    : /iPhone|iPad/.test(agent) ? "iOS"
+    : /Linux/.test(agent) ? "Linux"
+    : "";
+  return os ? `${browser} on ${os}` : browser;
 }

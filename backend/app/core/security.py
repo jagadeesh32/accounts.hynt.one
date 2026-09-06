@@ -1,75 +1,56 @@
-"""Passwords, opaque secrets and constant-time helpers.
-
-One implementation, for all four codebases. Before this existed, terminal used
-PBKDF2, intelligence used scrypt and xterminal used a different scrypt — three
-parameter sets to keep current, and no way to move a user between platforms.
-"""
-
-from __future__ import annotations
-
+"""Password hashing and the small opaque-secret helpers."""
 import hashlib
 import hmac
 import secrets
 
 from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerifyMismatchError, VerificationError
+from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
-# Argon2id at interactive-login cost. `time_cost`/`memory_cost` are embedded in
-# every stored hash, so raising them later re-hashes users on their next login
-# (see `needs_rehash`) without invalidating existing passwords.
-_hasher = PasswordHasher(
-    time_cost=3,
-    memory_cost=64 * 1024,   # 64 MiB
-    parallelism=4,
-    hash_len=32,
-    salt_len=16,
-)
-
-#: Verified against when the account does not exist, so an unknown address costs
-#: the same CPU as a known one. Without it, response time answers "does this
-#: email have an account here?" for anyone who cares to measure.
-_DUMMY_HASH = _hasher.hash(secrets.token_urlsafe(32))
+# Defaults tuned for a 2-vCPU box: ~64 MiB, 3 passes. Raising these later is
+# safe — `needs_rehash` upgrades a user's hash on their next successful login.
+_hasher = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2)
 
 
 def hash_password(password: str) -> str:
     return _hasher.hash(password)
 
 
-def verify_password(password: str, stored_hash: str | None) -> bool:
-    """False for a wrong password, a missing user, or a corrupt hash — and takes
-    the same time in every case."""
+def verify_password(password: str, hashed: str) -> bool:
     try:
-        _hasher.verify(stored_hash or _DUMMY_HASH, password)
-        return stored_hash is not None
-    except (VerifyMismatchError, VerificationError, InvalidHashError):
+        return _hasher.verify(hashed, password)
+    except (VerifyMismatchError, InvalidHashError, Exception):
         return False
 
 
-def needs_rehash(stored_hash: str) -> bool:
-    """True when the hash was made with weaker parameters than the current ones."""
+def needs_rehash(hashed: str) -> bool:
     try:
-        return _hasher.check_needs_rehash(stored_hash)
-    except InvalidHashError:
+        return _hasher.check_needs_rehash(hashed)
+    except Exception:
         return True
 
 
-# --------------------------------------------------------------------------- #
-#  Opaque secrets
-# --------------------------------------------------------------------------- #
-def new_secret(nbytes: int = 32) -> str:
-    """A URL-safe random string for session ids, auth codes and refresh tokens."""
+def new_opaque_token(nbytes: int = 32) -> str:
+    """The value that goes in the cookie / the authorization code."""
     return secrets.token_urlsafe(nbytes)
 
 
-def token_digest(raw: str) -> str:
-    """SHA-256 hex of a bearer secret, for storage.
-
-    Plain SHA-256 rather than Argon2 on purpose: these values are 256 bits of
-    entropy already, so there is nothing to brute-force, and this runs on every
-    single request that presents a cookie.
-    """
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+def sha256(value: str) -> str:
+    """What actually gets stored. The row is not the credential."""
+    return hashlib.sha256(value.encode()).hexdigest()
 
 
-def constant_time_equals(left: str, right: str) -> bool:
-    return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
+def constant_time_eq(a: str, b: str) -> bool:
+    return hmac.compare_digest(a, b)
+
+
+PASSWORD_MIN_LENGTH = 10
+
+
+def password_problem(password: str) -> str | None:
+    """Length is the only rule worth enforcing; composition rules push people
+    toward `Password1!` and nothing else."""
+    if len(password) < PASSWORD_MIN_LENGTH:
+        return f"Password must be at least {PASSWORD_MIN_LENGTH} characters."
+    if len(password) > 200:
+        return "Password must be at most 200 characters."
+    return None

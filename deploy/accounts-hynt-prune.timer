@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly prune of expired revocations
+# Without this the revocation list grows forever and the response every platform
+# polls every 30 seconds grows with it.
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
