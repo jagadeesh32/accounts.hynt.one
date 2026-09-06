@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError, type Me } from "../api";
+import { AppearanceButton } from "../widgets/AppearancePanel";
 
 /**
  * The one password form in the estate.
@@ -56,6 +57,10 @@ export function LoginPage({ me, onSignedIn }: { me: Me | null; onSignedIn: () =>
 
   return (
     <div className="login-page">
+      <div className="login-corner">
+        <AppearanceButton />
+      </div>
+
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand">
           <span className="brand-mark big">H</span>

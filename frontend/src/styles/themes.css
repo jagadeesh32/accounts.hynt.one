@@ -1,0 +1,352 @@
+/*
+ * Theme engine — 17 palettes, 8 font families, and a scalable typographic base.
+ *
+ * The sixteen Intelligence palettes, ported so one account carries one look
+ * across the estate, plus "hynt": the original ultramarine→cyan identity this
+ * host shipped with, kept as the default. A user who never opens the drawer
+ * sees exactly what they saw before.
+ *
+ * Ported, not copied. Intelligence names its tokens --bg-0/--text-0/--border;
+ * this app names them --bg/--text/--line and adds brand gradients the desks do
+ * not have. Each palette below is therefore restated in *this* app's vocabulary,
+ * so styles.css needs no rewriting to become themeable.
+ *
+ * Every block sets the same seventeen core tokens. Everything else — the
+ * gradients, the soft accent washes, the focus ring — is derived once, at the
+ * bottom, with color-mix(). Adding a palette means writing colours, never
+ * recomputing tints.
+ *
+ * Load order matters: imported after styles.css so a selected theme overrides
+ * the :root defaults. It is also applied before React mounts, by a small inline
+ * script in index.html, so there is no flash of the wrong palette on first paint.
+ */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Typographic base. Body text and every proportional size derive from
+   --fs-base, so one control rescales the whole UI coherently. */
+:root {
+  --fs-base: 14px;
+  --font-weight: 400;
+  --tracking: 0em;
+  --lh: 1.5;
+  --font-style: normal;
+}
+
+body {
+  font-family: var(--font-ui, ui-sans-serif, system-ui, sans-serif);
+  font-size: var(--fs-base);
+  font-weight: var(--font-weight);
+  letter-spacing: var(--tracking);
+  line-height: var(--lh);
+  font-style: var(--font-style);
+}
+
+/* Sizes in em so they scale with --fs-base instead of being frozen in px. */
+h1 { font-size: 1.57em; }
+h2 { font-size: 1.07em; }
+.mono { font-size: 0.89em; }
+.small-text { font-size: 0.86em; }
+.chip { font-size: 0.82em; }
+.tile-body h2 { font-size: 1.07em; }
+.tile-body p { font-size: 0.89em; }
+.btn.small { font-size: 0.89em; }
+.who-email { font-size: 0.86em; }
+.foot { font-size: 0.86em; }
+
+/* A theme-aware wash behind everything, built from the accent so each palette
+   carries a hint of its own colour without a second asset. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1100px 560px at 100% -8%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 62%),
+    radial-gradient(900px 520px at -6% 108%, color-mix(in srgb, var(--accent-2) 6%, transparent), transparent 60%);
+}
+
+/* === DARK THEMES ======================================================== */
+
+/* 0 · Hynt — the original identity, and the default. */
+[data-theme="hynt"] {
+  color-scheme: dark;
+  --bg: #05080f; --bg-2: #070b15;
+  --panel: #0b1120; --panel-2: #0f1626; --panel-3: #141d33; --surface-hi: #1f2c4a;
+  --line: #1c2740; --line-2: #243252;
+  --text: #eef3fd; --text-2: #aab6d4; --muted: #8490ab;
+  --accent: #4f8cff; --accent-2: #22d3ee;
+  --ok: #2fd07a; --warn: #f6b545; --danger: #ff5c7a;
+  --shadow-pop: 0 18px 50px -12px rgba(0,0,0,.75), 0 4px 14px -6px rgba(0,0,0,.6);
+}
+
+/* 1 · Abyss — near-black, high contrast */
+[data-theme="abyss"] {
+  color-scheme: dark;
+  --bg: #0b0d10; --bg-2: #0f1216;
+  --panel: #111418; --panel-2: #171b21; --panel-3: #1e242c; --surface-hi: #3a4552;
+  --line: #2a323c; --line-2: #3a4552;
+  --text: #e6edf3; --text-2: #a9b6c3; --muted: #6e7d8d;
+  --accent: #4c9aff; --accent-2: #199e70;
+  --ok: #199e70; --warn: #c98500; --danger: #e66767;
+  --shadow-pop: 0 18px 46px -12px rgba(0,0,0,.7), 0 4px 14px -6px rgba(0,0,0,.55);
+}
+
+/* 2 · Midnight — deep navy */
+[data-theme="midnight"] {
+  color-scheme: dark;
+  --bg: #060b18; --bg-2: #08101f;
+  --panel: #0a1426; --panel-2: #101d36; --panel-3: #172a4a; --surface-hi: #2d5485;
+  --line: #1f3a63; --line-2: #2d5485;
+  --text: #e8f1ff; --text-2: #a9c2e4; --muted: #6f88a8;
+  --accent: #6cb0ff; --accent-2: #46d18f;
+  --ok: #46d18f; --warn: #e0b34a; --danger: #ff6b6b;
+  --shadow-pop: 0 18px 50px -12px rgba(0,0,0,.75), 0 4px 14px -6px rgba(0,0,0,.6);
+}
+
+/* 3 · Carbon — neutral graphite, distraction-free */
+[data-theme="carbon"] {
+  color-scheme: dark;
+  --bg: #0f0f11; --bg-2: #121214;
+  --panel: #161618; --panel-2: #1e1e21; --panel-3: #27272b; --surface-hi: #42424a;
+  --line: #303035; --line-2: #42424a;
+  --text: #ececef; --text-2: #b4b4ba; --muted: #76767e;
+  --accent: #9aa0a6; --accent-2: #79b8ff;
+  --ok: #57c46a; --warn: #e0b34a; --danger: #f76767;
+  --shadow-pop: 0 18px 46px -12px rgba(0,0,0,.7), 0 4px 14px -6px rgba(0,0,0,.55);
+}
+
+/* 4 · Tokyo Night */
+[data-theme="tokyo-night"] {
+  color-scheme: dark;
+  --bg: #1a1b26; --bg-2: #16161e;
+  --panel: #16161e; --panel-2: #1f2335; --panel-3: #292e42; --surface-hi: #3d435e;
+  --line: #2f344d; --line-2: #3d435e;
+  --text: #c0caf5; --text-2: #9aa5ce; --muted: #565f89;
+  --accent: #7aa2f7; --accent-2: #7dcfff;
+  --ok: #9ece6a; --warn: #e0af68; --danger: #f7768e;
+  --shadow-pop: 0 18px 48px -12px rgba(0,0,0,.72), 0 4px 14px -6px rgba(0,0,0,.58);
+}
+
+/* 5 · Dracula */
+[data-theme="dracula"] {
+  color-scheme: dark;
+  --bg: #282a36; --bg-2: #21222c;
+  --panel: #21222c; --panel-2: #2e303e; --panel-3: #383b4d; --surface-hi: #4d5168;
+  --line: #3a3d4d; --line-2: #4d5168;
+  --text: #f8f8f2; --text-2: #c5c8d6; --muted: #8b8fa3;
+  --accent: #bd93f9; --accent-2: #8be9fd;
+  --ok: #50fa7b; --warn: #ffb86c; --danger: #ff5555;
+  --shadow-pop: 0 18px 48px -12px rgba(0,0,0,.72), 0 4px 14px -6px rgba(0,0,0,.58);
+}
+
+/* 6 · Nord — arctic, north-bluish */
+[data-theme="nord"] {
+  color-scheme: dark;
+  --bg: #2e3440; --bg-2: #272c36;
+  --panel: #272c36; --panel-2: #3b4252; --panel-3: #434c5e; --surface-hi: #576074;
+  --line: #424857; --line-2: #576074;
+  --text: #eceff4; --text-2: #c3cdd9; --muted: #8893a4;
+  --accent: #88c0d0; --accent-2: #81a1c1;
+  --ok: #a3be8c; --warn: #ebcb8b; --danger: #bf616a;
+  --shadow-pop: 0 18px 44px -12px rgba(0,0,0,.6), 0 4px 14px -6px rgba(0,0,0,.48);
+}
+
+/* 7 · Catppuccin Mocha */
+[data-theme="mocha"] {
+  color-scheme: dark;
+  --bg: #1e1e2e; --bg-2: #181825;
+  --panel: #181825; --panel-2: #262637; --panel-3: #313244; --surface-hi: #494d63;
+  --line: #363649; --line-2: #494d63;
+  --text: #cdd6f4; --text-2: #a6adc8; --muted: #7f849c;
+  --accent: #89b4fa; --accent-2: #89dceb;
+  --ok: #a6e3a1; --warn: #f9e2af; --danger: #f38ba8;
+  --shadow-pop: 0 18px 48px -12px rgba(0,0,0,.72), 0 4px 14px -6px rgba(0,0,0,.58);
+}
+
+/* 8 · Forest — deep green */
+[data-theme="forest"] {
+  color-scheme: dark;
+  --bg: #0d1612; --bg-2: #0f1b15;
+  --panel: #112019; --panel-2: #16291f; --panel-3: #1e3729; --surface-hi: #2f5a42;
+  --line: #21402f; --line-2: #2f5a42;
+  --text: #e6f2ea; --text-2: #a8c9b6; --muted: #6f8e7c;
+  --accent: #6fe0a4; --accent-2: #6cc4e6;
+  --ok: #5dd39e; --warn: #e3c06e; --danger: #ff7a7a;
+  --shadow-pop: 0 18px 46px -12px rgba(0,0,0,.7), 0 4px 14px -6px rgba(0,0,0,.55);
+}
+
+/* === LIGHT THEMES ======================================================= */
+
+/* 9 · Daylight — clean light blue */
+[data-theme="daylight"] {
+  color-scheme: light;
+  --bg: #ffffff; --bg-2: #fbfcfd;
+  --panel: #f7f8fa; --panel-2: #eef1f5; --panel-3: #e4e8ee; --surface-hi: #bcc5d1;
+  --line: #dde2e9; --line-2: #bcc5d1;
+  --text: #14202e; --text-2: #4a5768; --muted: #78859a;
+  --accent: #1b57c4; --accent-2: #1baf7a;
+  --ok: #10783a; --warn: #9a6700; --danger: #bd2c20;
+  --shadow-pop: 0 18px 40px -14px rgba(16,26,40,.22), 0 3px 10px -4px rgba(16,26,40,.12);
+}
+
+/* 10 · Paper — warm cream, easy on the eyes */
+[data-theme="paper"] {
+  color-scheme: light;
+  --bg: #fbf8f1; --bg-2: #f8f3e9;
+  --panel: #f5efe3; --panel-2: #efe7d6; --panel-3: #e6dbc4; --surface-hi: #c4b48f;
+  --line: #e0d4ba; --line-2: #c4b48f;
+  --text: #2c2618; --text-2: #5c533c; --muted: #8c8064;
+  --accent: #a8541b; --accent-2: #2b6c8c;
+  --ok: #3c7a34; --warn: #9a6b12; --danger: #b23b2a;
+  --shadow-pop: 0 18px 40px -14px rgba(70,52,20,.24), 0 3px 10px -4px rgba(70,52,20,.13);
+}
+
+/* 11 · Solar Light — Solarized Light */
+[data-theme="solar-light"] {
+  color-scheme: light;
+  --bg: #fdf6e3; --bg-2: #faf1d9;
+  --panel: #f6eccf; --panel-2: #eee4c4; --panel-3: #e3d6ad; --surface-hi: #c7b683;
+  --line: #e0d3a8; --line-2: #c7b683;
+  --text: #3b352a; --text-2: #5d553f; --muted: #8d8358;
+  --accent: #268bd2; --accent-2: #b58900;
+  --ok: #59944e; --warn: #a96f12; --danger: #cb3b3b;
+  --shadow-pop: 0 18px 40px -14px rgba(80,64,20,.24), 0 3px 10px -4px rgba(80,64,20,.13);
+}
+
+/* 12 · Gruvbox Light */
+[data-theme="gruvbox-light"] {
+  color-scheme: light;
+  --bg: #fbf1c7; --bg-2: #f8ecc1;
+  --panel: #f4e6bb; --panel-2: #ecdca0; --panel-3: #e0cc86; --surface-hi: #c3a85f;
+  --line: #dcc880; --line-2: #c3a85f;
+  --text: #3c3836; --text-2: #5f5645; --muted: #8a7b52;
+  --accent: #b57614; --accent-2: #427b58;
+  --ok: #6a8d22; --warn: #a35b12; --danger: #b8392f;
+  --shadow-pop: 0 18px 40px -14px rgba(70,55,15,.26), 0 3px 10px -4px rgba(70,55,15,.14);
+}
+
+/* 13 · Catppuccin Latte */
+[data-theme="latte"] {
+  color-scheme: light;
+  --bg: #eff1f5; --bg-2: #eaedf2;
+  --panel: #e6e9ef; --panel-2: #dce0e8; --panel-3: #ccd0da; --surface-hi: #acb0be;
+  --line: #ccd0da; --line-2: #acb0be;
+  --text: #4c4f69; --text-2: #5c5f77; --muted: #8d8fa3;
+  --accent: #1e66f5; --accent-2: #ea76cb;
+  --ok: #40a02b; --warn: #df8e1d; --danger: #d20f39;
+  --shadow-pop: 0 18px 40px -14px rgba(60,63,90,.22), 0 3px 10px -4px rgba(60,63,90,.12);
+}
+
+/* 14 · Rosé Dawn — Rosé Pine Dawn */
+[data-theme="rose-dawn"] {
+  color-scheme: light;
+  --bg: #faf4ed; --bg-2: #f7efe6;
+  --panel: #f3e9df; --panel-2: #ecdccd; --panel-3: #e0cfc0; --surface-hi: #c7ad9a;
+  --line: #e2d3c4; --line-2: #c7ad9a;
+  --text: #575279; --text-2: #6e6a86; --muted: #9a93a8;
+  --accent: #907aa9; --accent-2: #286983;
+  --ok: #658a4b; --warn: #b07a32; --danger: #b56b58;
+  --shadow-pop: 0 18px 40px -14px rgba(87,82,121,.22), 0 3px 10px -4px rgba(87,82,121,.12);
+}
+
+/* 15 · Sand — warm sepia neutral */
+[data-theme="sand"] {
+  color-scheme: light;
+  --bg: #f6f3ee; --bg-2: #f2eee7;
+  --panel: #efebe3; --panel-2: #e6e0d4; --panel-3: #dcd4c4; --surface-hi: #b8ad96;
+  --line: #d8d0bf; --line-2: #b8ad96;
+  --text: #2f2a22; --text-2: #5a5346; --muted: #8b8268;
+  --accent: #b06a2e; --accent-2: #356b80;
+  --ok: #4f7a3a; --warn: #9a6a16; --danger: #b23a2e;
+  --shadow-pop: 0 18px 40px -14px rgba(70,60,35,.24), 0 3px 10px -4px rgba(70,60,35,.13);
+}
+
+/* 16 · Mist — cool grey-blue light */
+[data-theme="mist"] {
+  color-scheme: light;
+  --bg: #f3f5f7; --bg-2: #eef1f4;
+  --panel: #eaeef1; --panel-2: #dde3e8; --panel-3: #cfd7de; --surface-hi: #a9b5bf;
+  --line: #d2dade; --line-2: #a9b5bf;
+  --text: #1f2a33; --text-2: #4a5662; --muted: #7a8693;
+  --accent: #2d6a8e; --accent-2: #2f7d52;
+  --ok: #2f7d52; --warn: #9a6b12; --danger: #c0392b;
+  --shadow-pop: 0 18px 40px -14px rgba(40,55,70,.22), 0 3px 10px -4px rgba(40,55,70,.12);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   DERIVED TOKENS.
+   Written once, against whichever palette won the cascade. var() is substituted
+   after the cascade resolves, so these pick up the active theme's --accent and
+   --bg without being restated in seventeen places.
+
+   Mixing toward --text rather than toward white is what makes one formula work
+   in both bands: on a dark palette --text is near-white and the result lightens;
+   on a light palette it is near-black and the same rule darkens. */
+:root {
+  --faint: color-mix(in srgb, var(--muted) 76%, var(--bg));
+  --neutral: var(--muted);
+
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 35%, transparent);
+  --accent-dim: color-mix(in srgb, var(--accent) 55%, var(--bg));
+
+  --grad-brand: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  --grad-brand-text: linear-gradient(
+    120deg,
+    color-mix(in srgb, var(--accent) 82%, var(--text)) 0%,
+    color-mix(in srgb, var(--accent-2) 82%, var(--text)) 100%
+  );
+
+  /* Readable label colour on top of a filled accent, in either band. */
+  --on-accent: #fff;
+
+  --ring: 0 0 0 1px var(--accent-line),
+          0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+  --shadow-tile: 0 10px 30px -14px color-mix(in srgb, var(--text) 42%, transparent);
+}
+
+/* A pale accent on a light palette cannot carry white text. These are the four
+   whose accent is light enough to need the label flipped. */
+[data-theme="carbon"],
+[data-theme="nord"],
+[data-theme="forest"] {
+  --on-accent: #12151a;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   8 FONT FAMILIES. Each sets --font-ui (used by body) and --mono (used by
+   tabular/code text), so picking a mono family turns the whole UI monospace and
+   keeps .mono consistent with it. */
+[data-font="system"] {
+  --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+[data-font="inter"] {
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+[data-font="plex"] {
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+[data-font="roboto"] {
+  --font-ui: "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Roboto Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+[data-font="jetbrains"] {
+  --font-ui: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --mono: var(--font-ui);
+}
+[data-font="fira"] {
+  --font-ui: "Fira Code", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --mono: var(--font-ui);
+}
+[data-font="georgia"] {
+  --font-ui: Georgia, "Times New Roman", "Source Serif Pro", serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+[data-font="lora"] {
+  --font-ui: "Lora", Georgia, "Times New Roman", serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}

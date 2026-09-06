@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import type { Me } from "./api";
+import { AppearanceButton } from "./widgets/AppearancePanel";
 
 export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   return (
@@ -22,6 +23,7 @@ export function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
             <span className="who-name">{me.full_name || me.email}</span>
             <span className="who-email">{me.email}</span>
           </div>
+          <AppearanceButton />
           <button className="btn ghost" onClick={onSignOut}>Sign out</button>
         </div>
       </header>

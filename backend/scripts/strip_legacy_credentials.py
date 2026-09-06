@@ -45,9 +45,9 @@ def strip_terminal(dry: bool) -> None:
 def xterminal_db_path() -> str:
     """Resolve the SQLite file X-Terminal actually opens.
 
-    Not the copy sitting in the checkout: XT_STATE_DIR in its .env points the
-    live database somewhere else entirely (/opt/x_terminal/backend/var), and the
-    file in the repo tree is a stale leftover. Writing to the wrong one succeeds
+    XT_STATE_DIR in its .env is the authority. It now points at the checkout's
+    own var/ directory, but it has pointed elsewhere before, so this resolves
+    the path rather than assuming it: writing to the wrong file succeeds
     silently and changes nothing that runs.
     """
     env = pathlib.Path("/opt/xterminal.hynt.one/backend/.env")

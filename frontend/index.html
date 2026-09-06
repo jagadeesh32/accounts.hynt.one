@@ -1,10 +1,64 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="daylight" data-font="system">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
     <title>Hynt Accounts</title>
+
+    <!-- Web fonts for the 8 font-family options. Preconnected so the first
+         paint is not blocked; the system and Georgia options need no network. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=Roboto:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&family=Fira+Code:wght@400;500;700&family=Lora:wght@400;500;600&display=swap"
+    />
+
+    <!-- Apply the saved appearance before React mounts, so the first frame is
+         already in the user's theme and font — no flash of the default. The
+         provider re-applies once mounted to stay correct and live.
+
+         The theme list is duplicated here on purpose: this has to run before any
+         module loads, so it cannot import from lib/appearance.ts. Keep the two
+         in step — the ids, and which of them are dark. -->
+    <script>
+      (function () {
+        var DARK = [
+          "hynt", "abyss", "midnight", "carbon",
+          "tokyo-night", "dracula", "nord", "mocha", "forest",
+        ];
+        var LIGHT = [
+          "daylight", "paper", "solar-light", "gruvbox-light",
+          "latte", "rose-dawn", "sand", "mist",
+        ];
+        var FONTS = ["system", "inter", "plex", "roboto", "jetbrains", "fira", "georgia", "lora"];
+        var el = document.documentElement;
+        try {
+          var raw = localStorage.getItem("hynt.accounts.appearance.v1");
+          var s = raw ? JSON.parse(raw) : {};
+          var t = DARK.indexOf(s.theme) >= 0 || LIGHT.indexOf(s.theme) >= 0 ? s.theme : "daylight";
+          var f = FONTS.indexOf(s.font) >= 0 ? s.font : "system";
+          el.setAttribute("data-theme", t);
+          el.setAttribute("data-font", f);
+          var mode = DARK.indexOf(t) >= 0 ? "dark" : "light";
+          el.setAttribute("data-mode", mode);
+          var st = el.style;
+          st.colorScheme = mode;
+          st.setProperty("--fs-base", Math.min(22, Math.max(10, +s.fontSize || 14)) + "px");
+          st.setProperty("--font-weight", String(typeof s.fontWeight === "number" ? s.fontWeight : 400));
+          st.setProperty("--tracking", (+s.tracking || 0) + "px");
+          st.setProperty("--lh", String(s.lineHeight || 1.5));
+          st.setProperty("--radius", (typeof s.radius === "number" ? Math.min(16, Math.max(0, s.radius)) : 10) + "px");
+          st.setProperty("--font-style", s.italic ? "italic" : "normal");
+        } catch (e) {
+          // Private mode, blocked storage, corrupt JSON — paint the default.
+          el.setAttribute("data-theme", "daylight");
+          el.setAttribute("data-font", "system");
+          el.setAttribute("data-mode", "light");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

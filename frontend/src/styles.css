@@ -1,50 +1,44 @@
 /* Hynt Accounts.
  *
- * The palette is Terminal's and X-Terminal's, token for token — the same deep
- * blue-black surfaces, the same #4f8cff → #22d3ee brand ramp. This host is the
- * one page a user sees between two platforms, so a different accent or a
- * different black would read as having been bounced somewhere else entirely.
- * Intelligence themes itself and is the odd one out by design; the two desks
- * are what this matches. */
+ * Structure and layout live here; colour does not. Every surface, line and
+ * label below is a token, and styles/themes.css redefines those tokens per
+ * palette — so this file never needs to know which of the seventeen is active.
+ *
+ * The :root values are "daylight", the default. The original ultramarine-on-
+ * black identity this host shipped with is still available, as the "hynt"
+ * theme; it is what Terminal and X-Terminal still wear. Everything here must
+ * therefore read correctly on a near-white ground *and* a near-black one,
+ * which is why there are no literal colours past this block. */
 
 :root {
-  /* Surfaces — deep blue-black, layered */
-  --bg: #05080f;
-  --bg-2: #070b15;
-  --panel: #0b1120;
-  --panel-2: #0f1626;
-  --panel-3: #141d33;
-  --surface-hi: #1f2c4a;
+  /* Surfaces */
+  --bg: #ffffff;
+  --bg-2: #fbfcfd;
+  --panel: #f7f8fa;
+  --panel-2: #eef1f5;
+  --panel-3: #e4e8ee;
+  --surface-hi: #bcc5d1;
 
   /* Hairlines & borders */
-  --line: #1c2740;
-  --line-2: #243252;
+  --line: #dde2e9;
+  --line-2: #bcc5d1;
 
   /* Text */
-  --text: #eef3fd;
-  --text-2: #aab6d4;
-  --muted: #8490ab;
-  --faint: #717fa0;
+  --text: #14202e;
+  --text-2: #4a5768;
+  --muted: #78859a;
 
-  /* Brand — HYNT ultramarine → cyan */
-  --accent: #4f8cff;
-  --accent-2: #22d3ee;
-  --accent-dim: #2c5fb8;
-  --accent-soft: rgba(79, 140, 255, 0.14);
-  --accent-line: rgba(79, 140, 255, 0.35);
-  --grad-brand: linear-gradient(135deg, #5b8dff 0%, #22d3ee 100%);
-  --grad-brand-text: linear-gradient(120deg, #8ab4ff 0%, #5fe7ff 100%);
-  --on-accent: #fff;
+  /* Brand — the accent pair the gradients are built from */
+  --accent: #1b57c4;
+  --accent-2: #1baf7a;
 
   /* Semantic */
-  --ok: #2fd07a;
-  --warn: #f6b545;
-  --danger: #ff5c7a;
-  --neutral: #8a97b8;
+  --ok: #10783a;
+  --warn: #9a6700;
+  --danger: #bd2c20;
 
   --radius: 10px;
-  --shadow-pop: 0 18px 50px -12px rgba(0, 0, 0, 0.75), 0 4px 14px -6px rgba(0, 0, 0, 0.6);
-  --ring: 0 0 0 1px var(--accent-line), 0 0 0 4px rgba(79, 140, 255, 0.18);
+  --shadow-pop: 0 18px 40px -14px rgba(16, 26, 40, 0.22), 0 3px 10px -4px rgba(16, 26, 40, 0.12);
 }
 
 * { box-sizing: border-box; }
@@ -62,7 +56,7 @@ h2 { font-size: 15px; margin: 0 0 10px; }
 a { color: inherit; text-decoration: none; }
 
 .muted { color: var(--muted); }
-.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.mono { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12.5px; }
 .small-text { font-size: 12px; white-space: pre-line; }
 .right { text-align: right; }
 .dim { opacity: 0.55; }
@@ -92,7 +86,7 @@ a { color: inherit; text-decoration: none; }
   display: grid; place-items: center;
   width: 26px; height: 26px; border-radius: 7px;
   background: var(--grad-brand);
-  color: #fff; font-weight: 700; font-size: 14px;
+  color: var(--on-accent); font-weight: 700; font-size: 14px;
 }
 .brand-mark.big { width: 42px; height: 42px; font-size: 20px; border-radius: 11px; }
 .brand-name {
@@ -120,6 +114,8 @@ a { color: inherit; text-decoration: none; }
 
 /* ---------- login ---------- */
 .login-page { display: grid; place-items: center; min-height: 100vh; padding: 20px; }
+/* Above the card's ::before wash, so the gear stays clickable. */
+.login-corner { position: fixed; top: 16px; right: 16px; z-index: 2; }
 .login-card {
   width: 100%; max-width: 380px; padding: 30px 28px 24px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
@@ -130,8 +126,8 @@ a { color: inherit; text-decoration: none; }
 .login-page::before {
   content: ""; position: fixed; inset: 0; pointer-events: none;
   background:
-    radial-gradient(420px 320px at 22% 18%, rgba(79, 140, 255, 0.18), transparent 70%),
-    radial-gradient(360px 300px at 80% 82%, rgba(34, 211, 238, 0.12), transparent 70%);
+    radial-gradient(420px 320px at 22% 18%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%),
+    radial-gradient(360px 300px at 80% 82%, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 70%);
 }
 .login-brand { text-align: center; margin-bottom: 22px; }
 .login-brand .brand-mark { margin: 0 auto 12px; }
@@ -163,7 +159,7 @@ select { cursor: pointer; }
   border: 1px solid var(--line); font: inherit; font-weight: 500;
   white-space: nowrap;
 }
-.btn:hover { border-color: #33405a; }
+.btn:hover { border-color: var(--line-2); }
 .btn.primary { background: var(--grad-brand); border-color: transparent; color: var(--on-accent); }
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.ghost { background: transparent; }
@@ -183,8 +179,16 @@ select { cursor: pointer; }
 .card.empty { color: var(--muted); text-align: center; padding: 34px; }
 
 .alert { padding: 10px 13px; border-radius: 8px; margin-bottom: 14px; border: 1px solid; font-size: 13px; }
-.alert.error { background: rgba(240, 85, 95, 0.1); border-color: rgba(240, 85, 95, 0.4); color: #ff9aa1; }
-.alert.ok { background: rgba(63, 185, 80, 0.1); border-color: rgba(63, 185, 80, 0.35); color: #7ee08a; }
+.alert.error {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  color: color-mix(in srgb, var(--danger) 72%, var(--text));
+}
+.alert.ok {
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 35%, transparent);
+  color: color-mix(in srgb, var(--ok) 72%, var(--text));
+}
 
 /* ---------- launcher ---------- */
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
@@ -195,7 +199,7 @@ select { cursor: pointer; }
 }
 .tile:not(.locked):hover {
   border-color: var(--accent-line); transform: translateY(-1px);
-  box-shadow: 0 10px 30px -14px rgba(0, 0, 0, 0.8);
+  box-shadow: var(--shadow-tile);
 }
 .tile.locked { opacity: 0.5; cursor: default; }
 .tile-icon {
@@ -215,7 +219,7 @@ select { cursor: pointer; }
 .chip.small { margin-left: 7px; }
 .chip.role { color: var(--accent); border-color: var(--accent-dim); }
 .chip.ok-chip { color: var(--ok); }
-.chip.warn { color: var(--warn); border-color: rgba(210, 153, 34, 0.4); }
+.chip.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .chip.muted-chip { opacity: 0.7; }
 
 /* ---------- tables ---------- */
@@ -236,7 +240,7 @@ select { cursor: pointer; }
   background: transparent; color: var(--muted); border: 1px solid var(--line);
 }
 .tab:hover { color: var(--text); }
-.tab.on { background: var(--panel-2); color: var(--text); border-color: #33405a; }
+.tab.on { background: var(--panel-2); color: var(--text); border-color: var(--line-2); }
 
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 16px; }
 .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }

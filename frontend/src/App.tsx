@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { api, type Me } from "./api";
 import { Shell } from "./Shell";
+import { AppearanceControls } from "./widgets/AppearancePanel";
 import { AdminPage } from "./pages/Admin";
 import { LauncherPage } from "./pages/Launcher";
 import { LoginPage } from "./pages/Login";
@@ -42,17 +43,22 @@ export function App() {
   }
 
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage me={me} onSignedIn={refresh} />} />
-      <Route
-        element={me ? <Shell me={me} onSignOut={signOut} /> : <Navigate to={`/login?next=${encodeURIComponent(location.pathname)}`} replace />}
-      >
-        <Route path="/" element={<LauncherPage />} />
-        <Route path="/security" element={<SecurityPage me={me!} onChanged={refresh} />} />
-        <Route path="/admin" element={<AdminPage />} />
-        <Route path="/superadmin" element={<SuperadminPage />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/login" element={<LoginPage me={me} onSignedIn={refresh} />} />
+        <Route
+          element={me ? <Shell me={me} onSignOut={signOut} /> : <Navigate to={`/login?next=${encodeURIComponent(location.pathname)}`} replace />}
+        >
+          <Route path="/" element={<LauncherPage />} />
+          <Route path="/security" element={<SecurityPage me={me!} onChanged={refresh} />} />
+          <Route path="/admin" element={<AdminPage />} />
+          <Route path="/superadmin" element={<SuperadminPage />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      {/* Mounted once, above the router: the drawer is reachable from the
+          login screen as well as from inside the shell. */}
+      <AppearanceControls />
+    </>
   );
 }
