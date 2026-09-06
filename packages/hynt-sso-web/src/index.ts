@@ -27,6 +27,15 @@ interface WireUser extends Omit<HyntUser, "planStatus"> {
   plan_status: string | null;
 }
 
+/**
+ * What `ensureSignedIn()` concluded.
+ *
+ * `redirecting` means the browser is already navigating away — render a splash
+ * and do nothing else. `blocked` means a hand-off just happened and did not
+ * help, so redirecting again would loop; show the reason instead.
+ */
+export type SignInOutcome = "signed-in" | "redirecting" | "blocked";
+
 export interface HyntSsoOptions {
   issuer: string;
   clientId: string;
@@ -45,6 +54,12 @@ interface TokenResponse {
 }
 
 const PENDING = "hynt_sso_pending";
+//: Timestamp of the last automatic hand-off, so a platform that keeps failing
+//: cannot bounce the browser between itself and the identity provider forever.
+const HANDOFF = "hynt_sso_handoff";
+//: A completed hand-off inside this window means the redirect did not fix
+//: anything, and going round again would not either.
+const HANDOFF_GUARD_MS = 20_000;
 const SILENT_MESSAGE = "hynt-sso:silent-result";
 
 function base64UrlEncode(bytes: Uint8Array): string {
@@ -93,6 +108,7 @@ export class HyntSso {
   private expiresAt = 0;
   private renewTimer: ReturnType<typeof setTimeout> | null = null;
   private inFlight: Promise<boolean> | null = null;
+  private lastErrorMessage: string | null = null;
 
   constructor(options: HyntSsoOptions) {
     this.opts = options;
@@ -109,6 +125,61 @@ export class HyntSso {
 
   get isSignedIn(): boolean {
     return this.accessToken !== null && Date.now() < this.expiresAt;
+  }
+
+  /** Why the last silent attempt failed, in words meant for a person. */
+  get lastError(): string | null {
+    return this.lastErrorMessage;
+  }
+
+  /**
+   * Get a session, or hand off to the identity provider to obtain one.
+   *
+   * This is the whole sign-in flow for a platform: no button, no password form,
+   * no interstitial — the same shape as signing in to a Google property. A
+   * signed-in user never sees anything; a signed-out one is redirected, signs in
+   * once at accounts.hynt.one, and lands back on the page they asked for.
+   *
+   * The guard matters more than it looks. A user who is signed in centrally but
+   * has no membership on *this* platform gets `access_denied` from
+   * `prompt=none` — forever, no matter how many times we redirect. Without the
+   * timestamp below that is an infinite bounce between two hosts, with no page
+   * ever rendering and nothing in the UI to explain why.
+   */
+  async ensureSignedIn(): Promise<SignInOutcome> {
+    if (await this.silentSignIn()) {
+      this.clearHandoff();
+      return "signed-in";
+    }
+
+    let last = 0;
+    try {
+      last = Number(sessionStorage.getItem(HANDOFF) ?? 0);
+    } catch {
+      last = 0;
+    }
+    if (last && Date.now() - last < HANDOFF_GUARD_MS) {
+      this.clearHandoff();
+      return "blocked";
+    }
+
+    try {
+      sessionStorage.setItem(HANDOFF, String(Date.now()));
+    } catch {
+      // Private mode with storage disabled: proceed without the guard rather
+      // than refusing to sign anyone in. The worst case is the bounce this
+      // guard exists to stop, which the user can still break by navigating away.
+    }
+    await this.signIn();
+    return "redirecting";
+  }
+
+  private clearHandoff(): void {
+    try {
+      sessionStorage.removeItem(HANDOFF);
+    } catch {
+      /* nothing to clear */
+    }
   }
 
   hasPermission(code: string): boolean {
@@ -180,6 +251,7 @@ export class HyntSso {
     });
 
     if (!result.code) {
+      this.lastErrorMessage = result.error ? this.describe(result.error) : null;
       this.clear();
       this.opts.onSignedOut?.();
       return false;
@@ -187,8 +259,10 @@ export class HyntSso {
 
     try {
       await this.exchange(result.code, verifier);
+      this.lastErrorMessage = null;
       return true;
-    } catch {
+    } catch (err) {
+      this.lastErrorMessage = err instanceof Error ? err.message : null;
       this.clear();
       this.opts.onSignedOut?.();
       return false;
@@ -213,6 +287,7 @@ export class HyntSso {
     if (state !== pending.state) throw new Error("Sign-in could not be verified. Please try again.");
 
     await this.exchange(code, pending.verifier);
+    this.clearHandoff();
     return { returnTo: pending.returnTo || "/" };
   }
 
@@ -331,7 +406,7 @@ export class HyntSso {
     switch (code) {
       case "access_denied":
       case "no_membership":
-        return "Your Hynt account does not have access to this platform yet.";
+        return "Your Hynt account does not have access to this platform yet. Ask an administrator to add you.";
       case "login_required":
         return "Your session has ended. Please sign in again.";
       default:
