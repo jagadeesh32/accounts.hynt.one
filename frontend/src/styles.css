@@ -342,32 +342,178 @@ a { color: inherit; text-decoration: none; }
   }
 }
 
-/* ---------- login ---------- */
-.login-page { display: grid; place-items: center; min-height: 100vh; padding: 20px; }
-/* Above the card's ::before wash, so the gear stays clickable. */
-.login-corner { position: fixed; top: 16px; right: 16px; z-index: 2; }
-.login-card {
-  width: 100%; max-width: 380px; padding: 30px 28px 24px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-  box-shadow: var(--shadow-pop);
+/* ---------- login ----------
+ *
+ * A split screen: a branded showcase on the left, credentials on the right.
+ * Enterprise-shaped, but every colour is still a token, so all seventeen
+ * palettes — near-white and near-black alike — render it correctly. On narrow
+ * viewports the showcase drops away and the card carries the brand alone.
+ */
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(420px, 1.06fr) minmax(440px, 1fr);
 }
 
-/* The ambient glow both desks put behind their sign-in card. */
-.login-page::before {
-  content: ""; position: fixed; inset: 0; pointer-events: none;
+/* — the showcase half — */
+.login-showcase {
+  position: relative; overflow: hidden;
+  border-right: 1px solid var(--line);
   background:
-    radial-gradient(420px 320px at 22% 18%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%),
-    radial-gradient(360px 300px at 80% 82%, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 70%);
+    radial-gradient(920px 640px at -14% -12%, color-mix(in srgb, var(--accent) 15%, transparent), transparent 62%),
+    radial-gradient(760px 560px at 112% 110%, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 60%),
+    linear-gradient(180deg, var(--bg-2), var(--bg));
 }
-.login-brand { text-align: center; margin-bottom: 22px; }
-.login-brand .brand-mark { margin: 0 auto 12px; }
-.login-brand h1 { font-size: 19px; }
+/* A drafted grid, strongest at the top and dissolving before the foot. */
+.login-showcase::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--line-2) 32%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--line-2) 32%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(130% 92% at 28% -4%, black 0%, transparent 74%);
+  mask-image: radial-gradient(130% 92% at 28% -4%, black 0%, transparent 74%);
+}
+.showcase-inner {
+  position: relative; z-index: 1;
+  min-height: 100vh; max-width: 560px;
+  display: flex; flex-direction: column;
+  padding: 44px 52px 36px;
+}
+.showcase-brand { display: flex; align-items: center; gap: 12px; }
+.showcase-mid { margin: auto 0; padding: 48px 0; display: flex; flex-direction: column; gap: 34px; }
+.showcase-copy h2 {
+  margin: 0 0 14px; font-size: clamp(26px, 2.6vw, 34px);
+  line-height: 1.14; letter-spacing: -0.02em; font-weight: 700;
+  background: var(--grad-brand-text);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.showcase-copy p { margin: 0; max-width: 42ch; color: var(--text-2); font-size: 15px; line-height: 1.65; }
+.showcase-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.showcase-list li {
+  display: flex; align-items: center; gap: 13px;
+  padding: 13px 16px; border-radius: 12px;
+  background: var(--glass); border: 1px solid var(--line-soft);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.showcase-list .ic {
+  flex-shrink: 0; width: 34px; height: 34px; border-radius: 9px;
+  display: grid; place-items: center;
+  color: var(--accent); background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+}
+.showcase-list strong { display: block; font-size: 13.5px; }
+.showcase-list small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 1px; }
+.showcase-foot {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--muted);
+  animation: rise-in 0.5s var(--ease-out) 0.24s both;
+}
+.showcase-foot .status-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent);
+  animation: login-pulse 2.6s ease-in-out infinite;
+}
+@keyframes login-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* — the form half — */
+.login-main { position: relative; display: grid; place-items: center; padding: 40px 24px; }
+/* A quiet accent wash so the card is never sitting on a flat field. */
+.login-main::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(620px 460px at 72% 10%,
+    color-mix(in srgb, var(--accent) 9%, transparent), transparent 68%);
+}
+/* Above the wash above, so the gear stays clickable. */
+.login-corner { position: absolute; top: 18px; right: 18px; z-index: 2; }
+.login-panel { position: relative; width: 100%; max-width: 402px; }
+.login-card {
+  padding: 32px 32px 26px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+  box-shadow: var(--shadow-pop); overflow: hidden;
+}
+/* A brand hairline across the crown of the card. */
+.login-card::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--grad-brand); opacity: 0.9;
+}
 .login-card > * { position: relative; }
+.login-lockup { display: flex; align-items: center; gap: 10px; margin-bottom: 26px; }
+.login-eyebrow {
+  margin: 0 0 6px; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  background: var(--grad-brand-text);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.login-card h1 { font-size: 21px; margin: 0 0 4px; }
+.login-sub { margin: 0 0 22px; font-size: 13px; }
+
+/* Slightly roomier inputs than the in-app forms — this is the front door. */
+.login-card input { padding: 11px 12px; border-radius: 9px; }
+.login-card input::placeholder { color: var(--faint); }
+.login-card .field { margin-bottom: 16px; }
+
+/* The alert gets an icon column; text keeps its own line-height. */
+.login-alert { display: flex; align-items: flex-start; gap: 9px; }
+.login-alert svg { flex-shrink: 0; margin-top: 1px; }
+
+/* Label row: the field name left, an inline Caps Lock flag right. */
+.label-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  margin-bottom: 6px; font-size: 12.5px; color: var(--muted);
+}
+.caps-hint {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--warn); font-size: 11.5px;
+}
+.field > small.caps-hint { margin-top: 4px; }
+
+/* The MFA code reads best mono, centred, spaced. */
+.otp-input {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 17px; letter-spacing: 0.42em; text-align: center;
+}
+
+.login-submit {
+  margin-top: 8px; padding: 12px 16px; border-radius: 10px;
+  font-size: 14.5px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  box-shadow: 0 12px 28px -12px color-mix(in srgb, var(--accent) 62%, transparent);
+}
+.submit-arrow { display: inline-flex; transition: transform 0.18s var(--ease-out); }
+.login-submit:hover .submit-arrow { transform: translateX(3px); }
+
 .fineprint { font-size: 12px; text-align: center; margin: 16px 0 0; }
+.login-foot {
+  display: flex; justify-content: center; align-items: center; gap: 6px;
+  margin: 18px 0 0; font-size: 12px; color: var(--muted);
+}
+.login-foot svg { color: var(--ok); }
+
+/* — entrance: the card rises as one block — */
+.login-card { animation: rise-in 0.5s var(--ease-out) 0.05s both; }
+.showcase-brand { animation: rise-in 0.5s var(--ease-out) both; }
+.showcase-mid > * { animation: rise-in 0.5s var(--ease-out) both; }
+.showcase-mid > :nth-child(2) { animation-delay: 0.1s; }
+
+@media (max-width: 980px) {
+  .login-page { grid-template-columns: 1fr; }
+  .login-showcase { display: none; }
+  .login-main { padding: 32px 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-card, .showcase-brand, .showcase-mid > *, .showcase-foot,
+  .showcase-foot .status-dot, .login-submit .submit-arrow { animation: none; transition: none; }
+}
 
 /* ---------- forms ---------- */
 .field { display: block; margin-bottom: 14px; }
 .field > span { display: block; margin-bottom: 6px; font-size: 12.5px; color: var(--muted); }
+/* The kit's PasswordField renders a span.input-wrap directly under the label,
+   where the label-text rule above would also catch it and shrink the input's
+   inherited font. Neutralise: the wrap is a control, not a caption. */
+.field > .input-wrap { margin-bottom: 0; font-size: inherit; color: var(--text); }
 .field small { display: block; margin-top: 5px; }
 
 input, select {

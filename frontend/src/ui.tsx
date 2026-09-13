@@ -278,9 +278,12 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
    ========================================================= */
 export function PasswordField({
   value, onChange, placeholder, autoComplete, leadIcon = "lock", minLength, autoFocus, required,
+  onKeyDown, onKeyUp,
 }: {
   value: string; onChange: (v: string) => void; placeholder?: string;
   autoComplete?: string; leadIcon?: IconName; minLength?: number; autoFocus?: boolean; required?: boolean;
+  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
+  onKeyUp?: React.KeyboardEventHandler<HTMLInputElement>;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -290,6 +293,7 @@ export function PasswordField({
         type={show ? "text" : "password"} value={value} placeholder={placeholder}
         autoComplete={autoComplete} minLength={minLength} autoFocus={autoFocus} required={required}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKeyDown} onKeyUp={onKeyUp}
       />
       <button
         type="button" className="btn ghost icon trail" tabIndex={-1}
