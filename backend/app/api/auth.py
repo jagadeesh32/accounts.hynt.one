@@ -3,10 +3,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import pyotp
-
 from app.api.schemas import LoginIn
-from app.core import audit, throttle
+from app.config import settings
+from app.core import audit, mfa, throttle
 from app.core.http import parse_uuid
 from app.core.authz import Actor, current_actor
 from app.core.security import hash_password, needs_rehash, verify_password
@@ -38,7 +37,7 @@ async def login(
     # Throttle on both axes: the address stops credential stuffing against one
     # account, the IP stops one host working through a list of addresses.
     throttle.check(f"login:email:{email}")
-    throttle.check(f"login:ip:{client_ip(request)}", limit=30)
+    throttle.check(f"login:ip:{client_ip(request)}", limit=settings.login_max_attempts_per_ip)
 
     user = (await db.execute(select(User).where(User.email == email))).scalars().first()
 
@@ -55,7 +54,7 @@ async def login(
     if user.mfa_enabled:
         if not body.otp:
             return {"mfa_required": True}
-        if not pyotp.TOTP(user.mfa_secret).verify(body.otp, valid_window=1):
+        if not await _second_factor_ok(db, user, body.otp, request):
             await audit.record(db, action="login.mfa_failed", actor_user_id=user.id, request=request)
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect verification code")
 
@@ -70,6 +69,28 @@ async def login(
 
     await audit.record(db, action="login.ok", actor_user_id=user.id, target=str(session.id), request=request)
     return {"ok": True, "user": {"id": str(user.id), "email": user.email, "name": user.full_name or ""}}
+
+
+async def _second_factor_ok(db: AsyncSession, user: User, code: str, request: Request) -> bool:
+    """Accepts a live authenticator code or one unused recovery code. Either way
+    the thing that matched is spent before the session is minted."""
+    step = mfa.match_totp(mfa.decrypt_secret(user.mfa_secret), code, user.mfa_last_used_step)
+    if step is not None:
+        user.mfa_last_used_step = step
+        return True
+    if not mfa.looks_like_recovery_code(code):
+        return False
+    wanted = mfa.hash_recovery_code(code)
+    for rc in user.recovery_codes:
+        if rc.used_at is None and rc.code_hash == wanted:
+            rc.used_at = utcnow()
+            remaining = sum(1 for r in user.recovery_codes if r.used_at is None)
+            await audit.record(
+                db, action="login.mfa_recovery_used", actor_user_id=user.id,
+                meta={"remaining": remaining}, request=request,
+            )
+            return True
+    return False
 
 
 @router.post("/logout")

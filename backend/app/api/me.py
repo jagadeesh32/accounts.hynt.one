@@ -1,7 +1,6 @@
 """The signed-in user's own account: profile, password, MFA, launcher."""
 import io
 
-import pyotp
 import qrcode
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
@@ -9,11 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import PasswordChangeIn, ProfileIn
 from app.config import settings
-from app.core import audit
+from app.core import audit, mfa
 from app.core.authz import Actor, current_actor, platform_claims
 from app.core.security import hash_password, password_problem, verify_password
 from app.core.sessions import revoke_all_sessions
 from app.db import get_db
+from app.models.identity import RecoveryCode
 from app.models.rbac import Platform
 from app.services import revocation
 
@@ -30,6 +30,7 @@ async def profile(actor: Actor = Depends(current_actor)):
         "status": u.status,
         "is_superadmin": u.is_superadmin,
         "mfa_enabled": u.mfa_enabled,
+        "recovery_codes_remaining": sum(1 for r in u.recovery_codes if r.used_at is None) if u.mfa_enabled else 0,
         "created_at": u.created_at.isoformat() if u.created_at else None,
         "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
     }
@@ -106,24 +107,35 @@ async def change_password(
 @router.post("/mfa/setup")
 async def mfa_setup(actor: Actor = Depends(current_actor), db: AsyncSession = Depends(get_db)):
     """Issues a secret but does not enable it — enabling requires proving the
-    authenticator app actually holds it (see /mfa/enable)."""
+    authenticator app actually holds it (see /mfa/enable). The secret goes back
+    to the browser exactly once, for the manual-entry fallback to the QR."""
     if actor.user.mfa_enabled:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Two-factor is already on")
-    secret = pyotp.random_base32()
-    actor.user.mfa_secret = secret
+    secret = mfa.new_secret()
+    actor.user.mfa_secret = mfa.encrypt_secret(secret)
+    actor.user.mfa_last_used_step = None
     await db.commit()
-    uri = pyotp.TOTP(secret).provisioning_uri(name=actor.user.email, issuer_name="Hynt")
-    return {"secret": secret, "otpauth_uri": uri}
+    return {"secret": secret, "otpauth_uri": mfa.provisioning_uri(secret, actor.user.email)}
 
 
 @router.get("/mfa/qr.png")
 async def mfa_qr(actor: Actor = Depends(current_actor)):
-    if not actor.user.mfa_secret:
+    if actor.user.mfa_enabled or not actor.user.mfa_secret:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Start setup first")
-    uri = pyotp.TOTP(actor.user.mfa_secret).provisioning_uri(name=actor.user.email, issuer_name="Hynt")
+    uri = mfa.provisioning_uri(mfa.decrypt_secret(actor.user.mfa_secret), actor.user.email)
     buf = io.BytesIO()
     qrcode.make(uri).save(buf, format="PNG")
     return Response(buf.getvalue(), media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+async def _issue_recovery_codes(db: AsyncSession, actor: Actor) -> list[str]:
+    """Replaces the whole set. Returned plain, stored hashed, shown once."""
+    for rc in list(actor.user.recovery_codes):
+        await db.delete(rc)
+    codes = mfa.generate_recovery_codes()
+    for code in codes:
+        db.add(RecoveryCode(user_id=actor.user.id, code_hash=mfa.hash_recovery_code(code)))
+    return codes
 
 
 @router.post("/mfa/enable")
@@ -133,15 +145,39 @@ async def mfa_enable(
     actor: Actor = Depends(current_actor),
     db: AsyncSession = Depends(get_db),
 ):
+    if actor.user.mfa_enabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Two-factor is already on")
     code = str(payload.get("otp", "")).strip()
     if not actor.user.mfa_secret:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Start setup first")
-    if not pyotp.TOTP(actor.user.mfa_secret).verify(code, valid_window=1):
+    step = mfa.match_totp(mfa.decrypt_secret(actor.user.mfa_secret), code, actor.user.mfa_last_used_step)
+    if step is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "That code did not match")
+    actor.user.mfa_last_used_step = step
     actor.user.mfa_enabled = True
+    codes = await _issue_recovery_codes(db, actor)
     await db.commit()
     await audit.record(db, action="mfa.enabled", actor_user_id=actor.user.id, request=request)
-    return {"ok": True}
+    return {"ok": True, "recovery_codes": codes}
+
+
+@router.post("/mfa/recovery-codes")
+async def mfa_regenerate_recovery_codes(
+    payload: dict,
+    request: Request,
+    actor: Actor = Depends(current_actor),
+    db: AsyncSession = Depends(get_db),
+):
+    """A fresh set invalidates every old one — that is the point when a
+    printout has gone missing. Password-gated like disable."""
+    if not actor.user.mfa_enabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Two-factor is not on")
+    if not verify_password(str(payload.get("password", "")), actor.user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Password is incorrect")
+    codes = await _issue_recovery_codes(db, actor)
+    await db.commit()
+    await audit.record(db, action="mfa.recovery_codes_regenerated", actor_user_id=actor.user.id, request=request)
+    return {"ok": True, "recovery_codes": codes}
 
 
 @router.post("/mfa/disable")
@@ -157,6 +193,9 @@ async def mfa_disable(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Password is incorrect")
     actor.user.mfa_enabled = False
     actor.user.mfa_secret = None
+    actor.user.mfa_last_used_step = None
+    for rc in list(actor.user.recovery_codes):
+        await db.delete(rc)
     await db.commit()
     await audit.record(db, action="mfa.disabled", actor_user_id=actor.user.id, request=request)
     return {"ok": True}

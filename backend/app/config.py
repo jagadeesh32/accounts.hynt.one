@@ -55,8 +55,15 @@ class Settings(BaseSettings):
     auth_code_ttl_seconds: int = 60              # 60 seconds, per README
     key_dir: str = "var/keys"
 
+    # --- mfa ---
+    # Fernet key (44-char urlsafe base64) that encrypts TOTP secrets at rest.
+    # Generate one with `python -m scripts.manage mfa-key`. Losing or changing it
+    # locks every two-factor user out until an admin resets their MFA.
+    mfa_encryption_key: str = ""
+
     # --- throttle ---
-    login_max_attempts: int = 10
+    login_max_attempts: int = 10                 # per email address
+    login_max_attempts_per_ip: int = 30
     login_window_seconds: int = 300
 
     # --- ops ---
@@ -64,6 +71,18 @@ class Settings(BaseSettings):
     # their auth code against /oauth/token with a cross-origin fetch.
     cors_origins: str = ""
     trusted_redirect_hosts: str = "hynt.one"     # suffix allow-list for redirect_uri
+
+    @model_validator(mode="after")
+    def _check_mfa_key(self) -> "Settings":
+        from cryptography.fernet import Fernet
+
+        if not self.mfa_encryption_key:
+            raise ValueError("HYNT_MFA_ENCRYPTION_KEY is required (python -m scripts.manage mfa-key)")
+        try:
+            Fernet(self.mfa_encryption_key.encode())
+        except Exception as exc:
+            raise ValueError("HYNT_MFA_ENCRYPTION_KEY is not a valid Fernet key") from exc
+        return self
 
     @model_validator(mode="after")
     def _check_cookie_samesite(self) -> "Settings":

@@ -281,6 +281,28 @@ async def cmd_suspend(args):
         print(f"{user.email} is now {user.status}")
 
 
+async def cmd_mfa_reset(args):
+    """For the superadmin who locked *themselves* out; everyone else goes
+    through the Accounts page."""
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.email == args.email.strip().lower()))).scalars().first()
+        if user is None:
+            sys.exit("no such user")
+        user.mfa_enabled = False
+        user.mfa_secret = None
+        user.mfa_last_used_step = None
+        for rc in list(user.recovery_codes):
+            await db.delete(rc)
+        await db.commit()
+        print(f"two-factor cleared for {user.email}; they can re-enrol from /security")
+
+
+async def cmd_mfa_key(args):
+    from cryptography.fernet import Fernet
+
+    print(f"HYNT_MFA_ENCRYPTION_KEY={Fernet.generate_key().decode()}")
+
+
 async def cmd_superadmin(args):
     """Grant or remove the estate-wide superadmin flag."""
     async with SessionLocal() as db:
@@ -404,6 +426,12 @@ def main():
                        help="lift a user's revocation early (undoes grant/passwd lockout)")
     p.add_argument("--email", required=True)
     p.set_defaults(fn=cmd_clear_revocations)
+
+    p = sub.add_parser("mfa-reset", help="clear a user's two-factor so they can sign in with password only")
+    p.add_argument("--email", required=True)
+    p.set_defaults(fn=cmd_mfa_reset)
+
+    sub.add_parser("mfa-key", help="print a fresh HYNT_MFA_ENCRYPTION_KEY line for .env").set_defaults(fn=cmd_mfa_key)
 
     sub.add_parser("list-users").set_defaults(fn=cmd_list_users)
     sub.add_parser("list-clients").set_defaults(fn=cmd_list_clients)

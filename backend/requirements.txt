@@ -30,6 +30,7 @@ pyjwt[crypto]==2.10.1
 # --- misc ---
 httpx==0.28.1
 qrcode==8.0
+pillow==11.1.0                  # qrcode renders PNG through PIL; without it /me/mfa/qr.png 500s
 pyotp==2.9.0
 
 # --- tests ---
