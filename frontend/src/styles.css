@@ -451,6 +451,9 @@ a { color: inherit; text-decoration: none; }
 
 /* Slightly roomier inputs than the in-app forms — this is the front door. */
 .login-card input { padding: 11px 12px; border-radius: 9px; }
+.login-card .input-wrap .lead-icon ~ input { padding-left: 38px; }
+/* Re-assert the kit's icon gutters — the padding shorthand above outranks them. */
+.login-card .input-wrap input[type="password"], .login-card .input-wrap input[type="text"] { padding-right: 42px; }
 .login-card input::placeholder { color: var(--faint); }
 .login-card .field { margin-bottom: 16px; }
 
@@ -513,7 +516,7 @@ a { color: inherit; text-decoration: none; }
 /* The kit's PasswordField renders a span.input-wrap directly under the label,
    where the label-text rule above would also catch it and shrink the input's
    inherited font. Neutralise: the wrap is a control, not a caption. */
-.field > .input-wrap { margin-bottom: 0; font-size: inherit; color: var(--text); }
+.field > .input-wrap { display: flex; margin-bottom: 0; font-size: inherit; color: var(--text); }
 .field small { display: block; margin-top: 5px; }
 
 input, select {
