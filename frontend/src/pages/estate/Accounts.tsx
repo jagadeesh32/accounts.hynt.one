@@ -222,6 +222,13 @@ export function AccountsPage() {
                     const r = await api.post<{ password: string | null }>(`/api/v1/superadmin/users/${u.id}/password`);
                     setNote({ kind: "ok", text: `New password for ${u.email}: ${r.password}` });
                   }, "Password reset.", load)}>Reset password</button>
+                  {u.mfa_enabled && (
+                    <button className="btn small ghost" onClick={() => {
+                      if (!window.confirm(`Turn off two-factor for ${u.email}? Their authenticator and recovery codes stop working; they sign in with password only until they re-enrol.`)) return;
+                      void act(() => api.post(`/api/v1/superadmin/users/${u.id}/mfa/reset`),
+                        `Two-factor cleared for ${u.email}.`, load);
+                    }}>Reset 2FA</button>
+                  )}
                   <button
                     className={`btn small ${u.is_superadmin ? "danger" : "ghost"}`}
                     onClick={() => {

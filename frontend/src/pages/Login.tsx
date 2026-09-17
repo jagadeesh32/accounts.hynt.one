@@ -25,6 +25,7 @@ export function LoginPage({ me, onSignedIn }: { me: Me | null; onSignedIn: () =>
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [mfaRequired, setMfaRequired] = useState(false);
+  const [useRecovery, setUseRecovery] = useState(false);
   const [capsOn, setCapsOn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -178,15 +179,31 @@ export function LoginPage({ me, onSignedIn }: { me: Me | null; onSignedIn: () =>
 
             {mfaRequired && (
               <label className="field">
-                <span>Verification code</span>
-                <input
-                  className="otp-input" type="text" value={otp} autoFocus inputMode="numeric"
-                  maxLength={6} autoComplete="one-time-code" placeholder="••••••"
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
-                  onKeyDown={trackCaps} onKeyUp={trackCaps}
-                />
-                <small className="muted">Six digits, from your authenticator app.</small>
-                {capsOn && (
+                <span>{useRecovery ? "Recovery code" : "Verification code"}</span>
+                {useRecovery ? (
+                  <input
+                    className="otp-input" type="text" value={otp} autoFocus autoCapitalize="off"
+                    maxLength={12} autoComplete="off" placeholder="xxxxx-xxxxx" spellCheck={false}
+                    onChange={(e) => setOtp(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+                  />
+                ) : (
+                  <input
+                    className="otp-input" type="text" value={otp} autoFocus inputMode="numeric"
+                    maxLength={6} autoComplete="one-time-code" placeholder="••••••"
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+                    onKeyDown={trackCaps} onKeyUp={trackCaps}
+                  />
+                )}
+                <small className="muted">
+                  {useRecovery
+                    ? "One of the codes you saved when you turned on two-factor. It works once."
+                    : "Six digits, from your authenticator app."}
+                  {" "}
+                  <button type="button" className="linkish" onClick={() => { setUseRecovery(!useRecovery); setOtp(""); setError(null); }}>
+                    {useRecovery ? "Use the authenticator instead" : "Lost your phone? Use a recovery code"}
+                  </button>
+                </small>
+                {capsOn && !useRecovery && (
                   <small className="caps-hint">
                     <Icon name="warning" size={12} /> Caps Lock is on
                   </small>

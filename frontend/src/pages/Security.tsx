@@ -10,6 +10,10 @@ export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void 
   const [mfaSetup, setMfaSetup] = useState<{ secret: string } | null>(null);
   const [otp, setOtp] = useState("");
   const [disablePassword, setDisablePassword] = useState("");
+  const [regenPassword, setRegenPassword] = useState("");
+  // Shown once, right after enable or regenerate; gone on the next render of
+  // anything else. The server keeps only hashes, so there is no "show again".
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [fullName, setFullName] = useState(me.full_name ?? "");
 
   const loadSessions = () =>
@@ -91,22 +95,45 @@ export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void 
 
       <div className="card">
         <h2>Two-factor authentication</h2>
+        {recoveryCodes && (
+          <RecoveryCodes codes={recoveryCodes} onDone={() => setRecoveryCodes(null)} />
+        )}
         {me.mfa_enabled ? (
           <>
             <p className="ok-text">Two-factor is on.</p>
+            <p className="muted">
+              {me.recovery_codes_remaining === 0
+                ? "You have no recovery codes left — generate a new set now, or a lost phone means a locked account."
+                : `${me.recovery_codes_remaining} of 10 recovery codes unused. Each signs you in once if your phone is unavailable.`}
+            </p>
+            <form className="row" onSubmit={(e) => {
+              e.preventDefault();
+              void act(async () => {
+                const r = await api.post<{ recovery_codes: string[] }>("/api/v1/me/mfa/recovery-codes", { password: regenPassword });
+                setRecoveryCodes(r.recovery_codes);
+              }, "New recovery codes issued. The old ones no longer work.")
+                .then(() => setRegenPassword(""));
+            }}>
+              <input type="password" placeholder="Confirm your password" value={regenPassword} required
+                     autoComplete="current-password" onChange={(e) => setRegenPassword(e.target.value)} />
+              <button className="btn" type="submit">New recovery codes</button>
+            </form>
             <form className="row" onSubmit={(e) => {
               e.preventDefault();
               void act(() => api.post("/api/v1/me/mfa/disable", { password: disablePassword }), "Two-factor turned off.")
-                .then(() => setDisablePassword(""));
+                .then(() => { setDisablePassword(""); setRecoveryCodes(null); });
             }}>
               <input type="password" placeholder="Confirm your password" value={disablePassword} required
-                     onChange={(e) => setDisablePassword(e.target.value)} />
+                     autoComplete="current-password" onChange={(e) => setDisablePassword(e.target.value)} />
               <button className="btn danger" type="submit">Turn off</button>
             </form>
           </>
         ) : mfaSetup ? (
           <>
-            <p className="muted">Scan this with your authenticator app, then enter the code it shows.</p>
+            <p className="muted">
+              Scan this with your authenticator app (Google Authenticator, Authy, 1Password, Microsoft
+              Authenticator…), then enter the code it shows.
+            </p>
             <div className="mfa">
               <img className="qr" src="/api/v1/me/mfa/qr.png" alt="Two-factor QR code" />
               <div>
@@ -116,17 +143,20 @@ export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void 
             </div>
             <form className="row" onSubmit={(e) => {
               e.preventDefault();
-              void act(() => api.post("/api/v1/me/mfa/enable", { otp }), "Two-factor is on.")
+              void act(async () => {
+                const r = await api.post<{ recovery_codes: string[] }>("/api/v1/me/mfa/enable", { otp });
+                setRecoveryCodes(r.recovery_codes);
+              }, "Two-factor is on. Save your recovery codes before leaving this page.")
                 .then(() => { setMfaSetup(null); setOtp(""); });
             }}>
-              <input inputMode="numeric" maxLength={6} placeholder="123456" value={otp} required
-                     onChange={(e) => setOtp(e.target.value)} />
+              <input className="otp-input" inputMode="numeric" maxLength={6} placeholder="123456" value={otp} required
+                     autoComplete="one-time-code" onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))} />
               <button className="btn primary" type="submit">Turn on</button>
             </form>
           </>
         ) : (
           <>
-            <p className="muted">Add a second step when signing in.</p>
+            <p className="muted">Add a second step when signing in: a six-digit code from an authenticator app on your phone.</p>
             <button className="btn" onClick={() => {
               void api.post<{ secret: string }>("/api/v1/me/mfa/setup").then(setMfaSetup);
             }}>Set up two-factor</button>
@@ -177,6 +207,31 @@ export function SecurityPage({ me, onChanged }: { me: Me; onChanged: () => void 
         />
       </div>
     </section>
+  );
+}
+
+/** The one-time reveal of recovery codes, with copy and print — there is no
+ *  second look, so the exits are deliberate. */
+function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const text = codes.join("\n");
+  return (
+    <div className="recovery">
+      <p><strong>Save these recovery codes now.</strong> They are shown only once. Each one signs you in a single
+        time if you lose your phone — keep them somewhere that is not the phone.</p>
+      <ol className="recovery-codes">
+        {codes.map((c) => <li key={c}><code>{c}</code></li>)}
+      </ol>
+      <div className="row">
+        <button className="btn" type="button" onClick={() => {
+          void navigator.clipboard?.writeText(text).then(() => setCopied(true));
+        }}>{copied ? "Copied" : "Copy"}</button>
+        <button className="btn" type="button" onClick={() => window.print()}>Print</button>
+        <button className="btn ghost" type="button" onClick={() => {
+          if (window.confirm("Have you saved the codes? They cannot be shown again.")) onDone();
+        }}>I've saved them</button>
+      </div>
+    </div>
   );
 }
 

@@ -34,6 +34,7 @@ class UserOut(BaseModel):
     status: str
     is_superadmin: bool
     mfa_enabled: bool
+    recovery_codes_remaining: int = 0
     created_at: str | None = None
     last_login_at: str | None = None
 

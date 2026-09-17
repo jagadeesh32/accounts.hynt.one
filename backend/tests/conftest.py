@@ -58,6 +58,10 @@ def server():
         # it here: without this the suite would inherit production's
         # SameSite=none against secure=false and refuse to start.
         "HYNT_COOKIE_SAMESITE": "lax",
+        # The suite signs the one seeded account in dozens of times; the real
+        # limit (10 per 5 minutes) is for humans and credential stuffers.
+        "HYNT_LOGIN_MAX_ATTEMPTS": "10000",
+        "HYNT_LOGIN_MAX_ATTEMPTS_PER_IP": "10000",
         "PYTHONPATH": str(BACKEND),
     }
     subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=BACKEND, env=env, check=True,

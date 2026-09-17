@@ -149,6 +149,23 @@ async def reset_password(user_id: str, payload: dict, request: Request, actor: A
     return {"ok": True, "password": password if not payload.get("password") else None}
 
 
+@router.post("/users/{user_id}/mfa/reset")
+async def reset_mfa(user_id: str, request: Request, actor: Actor = Depends(require_superadmin), db: AsyncSession = Depends(get_db)):
+    """The last resort when both the phone and the recovery codes are gone.
+    Leaves the account on password only until the user re-enrols."""
+    user = await db.get(User, parse_uuid(user_id, "user"))
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such user")
+    user.mfa_enabled = False
+    user.mfa_secret = None
+    user.mfa_last_used_step = None
+    for rc in list(user.recovery_codes):
+        await db.delete(rc)
+    await db.commit()
+    await audit.record(db, action="user.mfa_reset", actor_user_id=actor.user.id, target=user.email, request=request)
+    return {"ok": True}
+
+
 @router.post("/users/{user_id}/superadmin")
 async def set_superadmin(user_id: str, payload: dict, request: Request, actor: Actor = Depends(require_superadmin), db: AsyncSession = Depends(get_db)):
     user = await db.get(User, parse_uuid(user_id, "user"))

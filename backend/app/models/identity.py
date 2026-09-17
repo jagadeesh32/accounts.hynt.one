@@ -28,8 +28,12 @@ class User(Base):
     # `tv` claim, so an old token dies even inside its 24-hour window.
     token_version: Mapped[int] = mapped_column(Integer, default=1)
 
-    mfa_secret: Mapped[str | None] = mapped_column(String(64))
+    # Fernet ciphertext of the base32 TOTP secret (see core/mfa.py), never the
+    # secret itself. Set at setup, meaningful only once mfa_enabled flips.
+    mfa_secret: Mapped[str | None] = mapped_column(Text)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Highest 30-second TOTP step that has been accepted; a code is spent once.
+    mfa_last_used_step: Mapped[int | None] = mapped_column(Integer)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -38,7 +42,23 @@ class User(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     memberships = relationship("Membership", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
+    recovery_codes = relationship("RecoveryCode", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
     subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
+
+
+class RecoveryCode(Base):
+    """One-time stand-ins for the authenticator app. Only the SHA-256 is kept;
+    the plain codes are shown once, at generation, and never again."""
+
+    __tablename__ = "mfa_recovery_codes"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user = relationship("User", back_populates="recovery_codes")
 
 
 class Session(Base):

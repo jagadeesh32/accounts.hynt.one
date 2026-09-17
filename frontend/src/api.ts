@@ -38,6 +38,7 @@ export interface Me {
   status: string;
   is_superadmin: boolean;
   mfa_enabled: boolean;
+  recovery_codes_remaining: number;
   created_at: string | null;
   last_login_at: string | null;
 }
