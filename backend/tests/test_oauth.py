@@ -82,7 +82,7 @@ def test_full_code_exchange_yields_a_scoped_token(superadmin):
     assert response.status_code == 200
     body = response.json()
     assert body["token_type"] == "Bearer"
-    assert body["expires_in"] == 900
+    assert body["expires_in"] == 86_400
 
     payload = body["access_token"].split(".")[1]
     payload += "=" * (-len(payload) % 4)

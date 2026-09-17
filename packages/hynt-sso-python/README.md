@@ -25,4 +25,4 @@ pip install -e /opt/accounts.hynt.one/packages/hynt-sso-python
 30 seconds so a suspended account stops working in seconds rather than at token
 expiry. The poll **fails open**: if the identity provider is unreachable the
 cache is kept and retried, because refusing every request across the estate is a
-worse failure than honouring a revoked token for the rest of its 15 minutes.
+worse failure than honouring a revoked token for the rest of its 24 hours.

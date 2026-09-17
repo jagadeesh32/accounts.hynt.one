@@ -94,7 +94,7 @@ reads them with `hasEntitlement("terminal.smc")` and `planLimit("alerts", 5)`.
 Two consequences worth holding on to:
 
 - **A plan edit is not instant.** It reaches a member on their next token, so
-  allow up to 15 minutes before concluding an edit did not work.
+  allow up to 24 hours (or a reload, which mints a fresh token) before concluding an edit did not work.
 - **Limits are advisory unless a desk enforces them.** Nothing here stops a
   request; the desk has to ask.
 
@@ -173,4 +173,4 @@ These have no endpoints behind them, so they are a backend change first:
 Use the console. If you must go direct, the tables are `roles`, `plans`,
 `memberships` and `subscriptions` in `hynt_accounts` — but a direct write skips
 the audit log and the revocation publish, so a change made that way can take up
-to 15 minutes to reach a desk with nothing recording who made it.
+to 24 hours to reach a desk with nothing recording who made it.

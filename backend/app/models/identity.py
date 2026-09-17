@@ -20,12 +20,12 @@ class User(Base):
     full_name: Mapped[str | None] = mapped_column(String(200))
 
     # "active" | "suspended". Suspension is published to /api/v1/revocations,
-    # which is what makes it take effect before the 15-minute token expiry.
+    # which is what makes it take effect before the 24-hour token expiry.
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)
     is_superadmin: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Bumped on password change / forced logout. Platforms compare it to the
-    # `tv` claim, so an old token dies even inside its 15-minute window.
+    # `tv` claim, so an old token dies even inside its 24-hour window.
     token_version: Mapped[int] = mapped_column(Integer, default=1)
 
     mfa_secret: Mapped[str | None] = mapped_column(String(64))

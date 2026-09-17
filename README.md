@@ -35,7 +35,7 @@ Built on **FastAPI + Uvicorn**, **PostgreSQL** via SQLAlchemy + Alembic, and
      │  ◀── 4. redirect back with a 60-second code ─────────────│
      │                          │                              │
      ├── 5. POST /oauth/token (code + PKCE verifier) ──────────▶│
-     │  ◀── 6. RS256 access token, aud=terminal, 15 minutes ────┤
+     │  ◀── 6. RS256 access token, aud=terminal, 24 hours ────┤
      │                          │                              │
      │  7. requests with Bearer token ─────────────────────────▶│
      │                          │        verifies locally ─────┤
@@ -63,7 +63,7 @@ instant an account is suspended, and a row is revocable by definition.
 
 ### Tokens
 
-Access tokens are RS256, audience-scoped to one platform, and live 15 minutes.
+Access tokens are RS256, audience-scoped to one platform, and live 24 hours.
 A token minted for `terminal` is refused by X-Terminal — a leak cannot be
 replayed sideways across the estate.
 
@@ -83,7 +83,7 @@ The token carries what a platform needs to authorise a request without asking:
 
 ### Renewal, without refresh tokens in the browser
 
-The SPAs never hold a refresh token. When the 15 minutes are nearly up, a hidden
+The SPAs never hold a refresh token. When the 24 hours are nearly up, a hidden
 iframe hits `/oauth/authorize?prompt=none`, which succeeds against the SSO cookie
 and returns a fresh code. A page reload does the same thing before rendering.
 

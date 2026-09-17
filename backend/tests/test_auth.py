@@ -47,7 +47,7 @@ def test_production_cookie_is_samesite_none_for_the_renewal_iframe():
     """Silent renewal loads /oauth/authorize?prompt=none in a hidden iframe on
     the platform's origin, which is cross-site to accounts. SameSite=Lax is not
     sent there, so the renewal is answered "login_required" and every desk 401s
-    on /api/auth/me once its 15-minute token lapses."""
+    on /api/auth/me once its 24-hour token lapses."""
     from app.config import Settings
 
     assert Settings(cookie_secure=True, cookie_samesite="", _env_file=None).samesite == "none"

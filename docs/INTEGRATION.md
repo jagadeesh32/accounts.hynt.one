@@ -78,7 +78,7 @@ Delete the local password form. There is one in the estate and it lives here.
 }
 ```
 
-15 minutes, RS256, verified locally against the cached JWKS. Nothing calls back
+24 hours, RS256, verified locally against the cached JWKS. Nothing calls back
 here on the request path.
 
 ## 5. Revocation
@@ -98,6 +98,6 @@ become an outage everywhere.
 | `GET /.well-known/openid-configuration` | discovery |
 | `GET /.well-known/jwks.json` | public keys (cache 1h) |
 | `GET /oauth/authorize` | code + PKCE; `prompt=none` for silent renewal |
-| `POST /oauth/token` | code → 15-minute access token |
+| `POST /oauth/token` | code → 24-hour access token |
 | `GET /oauth/logout` | ends the estate-wide session |
 | `GET /api/v1/revocations` | poll every ~30s |

@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     session_idle_days: int = 7
 
     # --- tokens ---
-    access_token_ttl_seconds: int = 900          # 15 minutes, per README
+    access_token_ttl_seconds: int = 86_400       # 24 hours, per README
     auth_code_ttl_seconds: int = 60              # 60 seconds, per README
     key_dir: str = "var/keys"
 

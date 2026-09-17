@@ -4,7 +4,7 @@ Shape of the flow (README, "How it works"):
   1. platform SPA redirects here with a PKCE challenge
   2. the hynt_sso cookie decides whether a password is needed
   3. we redirect back with a 60-second, single-use code
-  4. the SPA exchanges it for a 15-minute RS256 token scoped to that platform
+  4. the SPA exchanges it for a 24-hour RS256 token scoped to that platform
 """
 import base64
 import hashlib

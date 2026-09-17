@@ -149,7 +149,7 @@ class _Revocations:
                 # Fail *open* on a fetch error, and retry soon. The alternative —
                 # refusing every token because the IdP blinked — turns a brief
                 # outage there into a total outage across the estate. The window
-                # is bounded by the 15-minute token lifetime either way.
+                # is bounded by the 24-hour token lifetime either way.
                 self._fetched_at = now - self._interval + 5
                 return
             self._users = set(data.get("users", []))
